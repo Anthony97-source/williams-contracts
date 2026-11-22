@@ -440,3 +440,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-68 -->
 - #68: Guardian Consent Status Survives Unchecked Across Guardian Weight Updates
+
+<!-- handsoff-issue-187 -->
+- #187: Allow hashed claims after guardian release without waiting for inactivity deadlines
