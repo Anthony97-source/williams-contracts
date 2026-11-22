@@ -634,6 +634,38 @@ pub fn save_will(env: &Env, will: &Will) {
     }
 }
 
+/// Extends the persistent storage TTL of a live will record without modifying
+/// its contents.
+///
+/// # Rent policy for Released wills with outstanding hashed claims
+///
+/// [`save_will`] deliberately stops renewing the TTL of terminal wills
+/// (`Released` / `Cancelled`) so fully discharged records age out and are
+/// collected by Soroban's state archival system. A `Released` will that still
+/// carries unpaid hashed reserves in `Will::balances`, however, must remain
+/// loadable until every beneficiary has claimed: `reveal_and_claim` reads the
+/// record and writes the remaining balances back, and a TTL lapse in between
+/// would force a restore of the entry before the next claim could succeed.
+///
+/// This helper is the explicit, narrowly scoped keepalive for exactly that
+/// case. It only ever extends an existing `DataKey::Will(will_id)` entry — it
+/// never creates, mutates, or re-validates the will, so entitlements are
+/// untouched — and it is a no-op returning [`WillError::WillNotFound`] when the
+/// record is absent (never created, explicitly archived, or already collected).
+/// Callers are responsible for only invoking it while real outstanding claims
+/// remain; once a record is fully discharged it must be left to expire under
+/// the normal terminal rent behaviour.
+pub fn extend_will_ttl(env: &Env, will_id: u64) -> Result<(), WillError> {
+    let key = DataKey::Will(will_id);
+    if !env.storage().persistent().has(&key) {
+        return Err(WillError::WillNotFound);
+    }
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    Ok(())
+}
+
 /// Loads a will by id, returning `WillError::WillNotFound` if it does not exist.
 ///
 /// # Archived-entry limitation (issue #166)

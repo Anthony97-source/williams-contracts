@@ -5209,6 +5209,69 @@ impl WillContract {
         }
     }
 
+    /// Extends the persistent storage TTL of a **live** `Released` will that
+    /// still has outstanding hashed-beneficiary reserves (#211).
+    ///
+    /// # Why this exists
+    ///
+    /// [`storage::save_will`] deliberately stops renewing the TTL of terminal
+    /// records so that fully discharged wills age out of persistent storage
+    /// and stop costing rent. A `Released` will that still holds reserves for
+    /// hashed beneficiaries who have not yet called
+    /// [`WillContract::reveal_and_claim`] is *not* fully discharged, though:
+    /// its live `Will` entry is the only thing `reveal_and_claim` can load to
+    /// verify a commitment. Without a maintenance path, a beneficiary who
+    /// claims over a long interval — or simply waits — could find the record
+    /// TTL-archived by the network and be forced through a state-restore
+    /// transaction before their reserved share becomes claimable.
+    ///
+    /// [`WillContract::extend_archived_will_ttl`] cannot help here: it
+    /// operates on [`storage::DataKey::ArchivedWill`], a different key that
+    /// only exists after [`WillContract::archive_will`] has run, and archival
+    /// is itself blocked while hashed reserves are unclaimed (#1).
+    ///
+    /// # Rent policy
+    ///
+    /// - **Callable by anyone.** No `require_auth` is enforced: keeping a
+    ///   claimable record alive is a public good, and the caller pays the
+    ///   transaction fee for the TTL bump.
+    /// - **Only for records with real outstanding claims.** A will whose
+    ///   hashed beneficiaries have all claimed has no reason to stay live, so
+    ///   this rejects it with [`WillError::NoOutstandingClaims`] and the
+    ///   record keeps its terminal rent behaviour (it ages out, and
+    ///   [`WillContract::archive_will`] becomes callable).
+    /// - **Claims renew the record too.** [`WillContract::reveal_and_claim`]
+    ///   extends the same TTL whenever unclaimed reserves remain after a
+    ///   successful claim, so claiming one slot of several keeps the record
+    ///   alive for the others without a separate keepalive call.
+    ///
+    /// # What it does not do
+    ///
+    /// This is purely a rent-maintenance operation. It does not mutate
+    /// balances, beneficiaries, hashed commitments, permissions or status —
+    /// the will is loaded, checked, and its TTL extended. Entitlements are
+    /// exactly what they were before the call.
+    ///
+    /// # Panics
+    /// - [`WillError::WillNotFound`] if no live will exists with this id (it
+    ///   was never created, was archived, or already TTL-expired).
+    /// - [`WillError::WillNotSettled`] if the will is not `Released`.
+    /// - [`WillError::NoOutstandingClaims`] if the will is `Released` but
+    ///   every hashed beneficiary has already claimed.
+    pub fn keepalive_released_will(env: Env, will_id: u64) {
+        let will = load_will(&env, will_id);
+        if will.status != WillStatus::Released {
+            panic_with_error!(&env, WillError::WillNotSettled);
+        }
+        // Fully discharged records keep terminal rent behaviour: no
+        // outstanding claim means no reason to pay to keep the entry alive.
+        if unclaimed_hashed_bps(&will.hashed_beneficiaries) == 0 {
+            panic_with_error!(&env, WillError::NoOutstandingClaims);
+        }
+        storage::extend_will_ttl(&env, will_id);
+        storage::bump_instance_ttl(&env);
+    }
+
     // -----------------------------------------------------------------------
     // Issue #45 — split_will
     // -----------------------------------------------------------------------
@@ -6865,6 +6928,14 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     will.balances = hashed_reserves;
     will.balance = will.balances.get(will.token.clone()).unwrap_or(0);
 
+    // A Released will with outstanding hashed reserves is not fully
+    // discharged, so `save_will` below will not renew its TTL. Renew it here
+    // instead (#211): the record is the only thing `reveal_and_claim` can
+    // load to verify a commitment, so leaving it to expire would force
+    // beneficiaries through a state-restore transaction. Fully discharged
+    // records keep terminal rent behaviour.
+    let has_outstanding_claims = unclaimed_hashed_bps(&will.hashed_beneficiaries) > 0;
+
     // Move the will out of its current status bucket (Active or Triggered)
     // into Released, then prune the owner status index since released wills
     // are removed from the owner index entirely (#71).
@@ -6881,6 +6952,9 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
     storage::unindex_triggered_will(env, will.id);
     storage::save_will(env, will);
+    if has_outstanding_claims {
+        storage::extend_will_ttl(env, will.id);
+    }
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
     //

@@ -371,4 +371,15 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
+    /// The rent-maintenance entry point for released hashed reserves was
+    /// called on a will that has no outstanding claims left to protect.
+    ///
+    /// A `Released` will keeps its persistent storage entry alive only while
+    /// at least one hashed beneficiary commitment is still unclaimed, because
+    /// `reveal_and_claim` needs that entry to verify the commitment. Once
+    /// every slot has been claimed (or the will never had any hashed
+    /// beneficiaries), the record is fully discharged: it retains terminal
+    /// rent behaviour and cannot be kept alive indefinitely by calling the
+    /// keepalive again (#211).
+    NoOutstandingClaims = 59,
 }

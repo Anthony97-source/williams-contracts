@@ -75,4 +75,42 @@ fn contract_interface_is_available() {
     // get_contract_version
     let version = client.get_contract_version();
     assert!(version > 0);
+
+    // keepalive_released_will: maintain a Released will that still has an
+    // outstanding hashed reserve, then confirm the record stays accessible.
+    let released_beneficiary = Address::generate(&env);
+    let released_will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_address.clone(), 100_000_i128)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: released_beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // Advance past the deadline and distribute so the will becomes Released
+    // while the hashed reserve remains outstanding.
+    env.ledger().set_timestamp(1_700_000_000 + 91 * 86_400);
+    client.distribute(&released_will_id);
+
+    let released_will = client.get_will(&released_will_id);
+    assert_eq!(released_will.id, released_will_id);
+
+    // The keepalive entrypoint must succeed for a Released record with an
+    // outstanding claim and must not alter the stored will.
+    client.keepalive_released_will(&released_will_id);
+
+    let kept_alive_will = client.get_will(&released_will_id);
+    assert_eq!(kept_alive_will.id, released_will_id);
+    assert_eq!(kept_alive_will.status, released_will.status);
+    assert_eq!(kept_alive_will.balances, released_will.balances);
 }

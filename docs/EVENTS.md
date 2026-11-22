@@ -43,6 +43,7 @@ data, in order.
 | `payfail` | `distribute`, `reveal_and_claim` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
 | `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128)` |
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
+| `keepalive` | `keepalive_claim_reserve` | `(caller: Address, new_ttl: u32)` |
 
 ## `archived`
 
@@ -70,6 +71,22 @@ never to receive a stale or historical timestamp.
 - `checkin_period_days`: updated check-in period in days.
 - `grace_period_days`: updated grace period in days.
 - `next_deadline`: ledger timestamp (Unix seconds) for the next check-in deadline (`now + checkin_period_days * 86_400`), guaranteed to be strictly in the future.
+
+## `keepalive`
+
+`keepalive_claim_reserve` renews the storage TTL of a `Released` will that still
+holds outstanding hashed claim reserves, so beneficiaries claiming over long
+intervals do not have to restore an archived entry. It is a rent-maintenance
+operation only: balances, beneficiaries, claim slots and permissions are left
+unchanged, and no entitlement is created, moved or revoked.
+
+- `caller`: the address that paid for the renewal (owner or any reserve holder).
+- `new_ttl`: the ledger sequence number the will entry is now live until.
+
+The event is emitted only when the will is `Released` and at least one hashed
+reserve remains unpaid. Fully discharged records (no outstanding reserves) keep
+their terminal rent behaviour and are never kept alive by this operation; they
+follow the normal archival path described under `archived`.
 
 ## Failed operations
 

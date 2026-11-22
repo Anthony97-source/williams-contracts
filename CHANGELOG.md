@@ -25,6 +25,21 @@ gets its own [contract spec artifact](./spec) once exported.
   confirmation time, and that account existence cannot be checked on-chain
   (failed payouts fall back to `retry_failed_payout`) (#493).
 ### Added
+- `keepalive_claim_record(will_id, caller)` (#211): a narrowly scoped
+  rent-maintenance entry point for `Released` wills that still carry
+  outstanding hashed claim reserves. `save_will` intentionally stops extending
+  the TTL of `Released` records, so a beneficiary claiming over a long interval
+  could find the live claim record archived despite earlier successful claims
+  or reads. `caller` must authorize the call and must be the will's owner or
+  the holder of an unclaimed hashed reserve; anyone else is rejected with
+  `WillError::NotAuthorized` (57). The call only extends the record's TTL — it
+  never mutates balances, entitlements, claimed flags or status, so claiming
+  one slot leaves every other slot's maintenance path intact. Fully discharged
+  records (no unclaimed hashed reserves left) are rejected with the new
+  `WillError::NoOutstandingClaims` (58) so terminal records keep their normal
+  rent behaviour instead of being kept alive indefinitely. `reveal_and_claim`
+  also renews the record's TTL when unclaimed reserves remain after the claim,
+  under the same documented rent policy.
 - `redirect_failed_payout(will_id, token, old_recipient, new_recipient,
   caller)` (#19): moves a recorded failed payout — amount unchanged, no
   tokens leave the contract — to a new destination so a permanently stalled
