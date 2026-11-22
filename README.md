@@ -440,3 +440,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-68 -->
 - #68: Guardian Consent Status Survives Unchecked Across Guardian Weight Updates
+
+<!-- handsoff-issue-197 -->
+- #197: Include the paying token in keeper bounty events
