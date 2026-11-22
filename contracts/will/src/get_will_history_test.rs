@@ -23,7 +23,7 @@ use soroban_sdk::{
 use crate::storage::MAX_HISTORY_ENTRIES;
 use crate::{
     types::WillStatusTransition, Allocation, Beneficiary, WillContract, WillContractClient,
-    WillStatus,
+    WillStatus, MIN_CHECKIN_INTERVAL,
 };
 
 const DAY: u64 = 86_400;
@@ -78,7 +78,9 @@ fn create_will(
 /// three entries on top of the single `create` transition (#500).
 fn cycle(env: &Env, client: &WillContractClient<'_>, owner: &Address, will_id: u64, rounds: u32) {
     for _ in 0..rounds {
-        // check_in resets the deadline so the next trigger is due.
+        // Let check_in pass the rate limit and record a transition.
+        env.ledger()
+            .with_mut(|ledger| ledger.timestamp += MIN_CHECKIN_INTERVAL);
         client.check_in(&will_id, owner);
         advance(env, 91);
         client.trigger_will(&will_id);
