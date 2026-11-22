@@ -5383,11 +5383,36 @@ impl WillContract {
         // into the child's. `token`/`balance` mirror the primary (first)
         // token in `tokens`, same as `balances`, which remains the
         // authoritative multi-token ledger.
+        // A secondary token whose entire balance moves to the child is
+        // *removed* from the source map rather than left as a zero entry
+        // (#216): `MAX_TOKENS` counts keys, so a zeroed key would keep
+        // occupying a funding slot and block `top_up` of a replacement token
+        // even though the source no longer holds any of it. Partially funded
+        // entries stay as-is. The primary token's mirror is never removed --
+        // `Will::token`/`Will::balance` must keep pointing at a real key --
+        // so an emptied primary is represented as an explicit zero, which
+        // preserves the primary-denomination semantics fixed claims rely on.
         for (token_addr, amt) in child_balances.iter() {
             let held = source.balances.get(token_addr.clone()).unwrap_or(0);
-            source.balances.set(token_addr, held - amt);
+            let remaining = held - amt;
+            if remaining == 0 && token_addr != source.token {
+                source.balances.remove(token_addr);
+            } else {
+                source.balances.set(token_addr, remaining);
+            }
         }
         source.balance = source.balances.get(source.token.clone()).unwrap_or(0);
+
+        // Reconcile the keeper bounty target (#216): if the bounty was
+        // denominated in a token whose balance just moved entirely to the
+        // child, the source can no longer pay it. Drop the target so the
+        // source falls back to the default bounty token selection instead of
+        // pointing at a token it no longer holds.
+        if let Some(bounty_token) = source.keeper_bounty_token.clone() {
+            if !source.balances.contains_key(bounty_token) {
+                source.keeper_bounty_token = None;
+            }
+        }
 
         let (primary_token, _) = tokens.get_unchecked(0);
         let primary_amount = child_balances.get(primary_token.clone()).unwrap_or(0);
@@ -7065,6 +7090,24 @@ fn reset_all_guardians_consent(env: &Env, guardians: &Vec<Guardian>) -> Vec<Guar
         });
     }
     reset
+}
+
+/// Rejects this contract's own address as a participant role (#215).
+///
+/// A beneficiary or guardian equal to `env.current_contract_address()` is
+/// unusable: a beneficiary payout would be a token self-transfer that marks
+/// the allocation paid while the funds never leave the vault, and a guardian
+/// at that address cannot supply an ordinary external signature, so a quorum
+/// including it can never be reached. Other contract addresses are still
+/// accepted -- a distinct contract wallet with a real authorization
+/// implementation is a legitimate participant.
+///
+/// Callers must invoke this before any custody or index mutation so a
+/// rejected list leaves state unchanged.
+fn assert_not_self_address(env: &Env, addr: &Address) {
+    if *addr == env.current_contract_address() {
+        panic_with_error!(env, WillError::InvalidBeneficiary);
+    }
 }
 
 /// Combines two `Allocation`s recorded for the same beneficiary across two
