@@ -440,3 +440,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-68 -->
 - #68: Guardian Consent Status Survives Unchecked Across Guardian Weight Updates
+
+<!-- handsoff-issue-191 -->
+- #191: Preserve ascending ID order in every index used by value cursors
