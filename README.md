@@ -443,3 +443,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-191 -->
 - #191: Preserve ascending ID order in every index used by value cursors
+
+<!-- handsoff-issue-193 -->
+- #193: Apply index capacity checks to additive portfolio migration
