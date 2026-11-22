@@ -5521,16 +5521,8 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
-    /// - `commitment`: 32-byte SHA-256 hash of the pre-image
-    ///   `beneficiary.clone().to_xdr() || salt` (see [`Self::reveal_and_claim`]).
-    /// - `percentage`: share of the will's balance for this beneficiary.
-    ///
-    /// # Panics
-    /// - [`WillError::NotOwner`] / [`WillError::WillNotActive`]
-    /// - [`WillError::InvalidPercentages`] if total percentages would exceed 100.
-    /// - [`WillError::InvalidPreimage`] if `commitment` is not a 32-byte digest.
-    /// - `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.
-    ///   Must be exactly 32 bytes — see the validation rules below.
+    /// - `commitment`: 32-byte digest `sha256(sha256(xdr(beneficiary)) || salt)`.
+    ///   See [`Self::reveal_and_claim`] for the pre-image layout.
     /// - `percentage`: share of the will's balance for this beneficiary, in
     ///   basis points. Must be greater than zero.
     ///
@@ -5594,11 +5586,6 @@ impl WillContract {
     /// Verifies a pre-image against a stored commitment hash and, if correct,
     /// immediately transfers that beneficiary's share to the revealed address.
     ///
-    /// The pre-image must be `claimant.clone().to_xdr() || salt`: the XDR encoding of
-    /// the beneficiary `Address` followed by a random salt chosen at
-    /// registration time. The contract checks that the pre-image starts with
-    /// the XDR of `claimant`, so the commitment is bound to one payout address.
-    ///
     /// # Replay protection (#440)
     ///
     /// - Each hashed slot has a `claimed` flag that is set and persisted in
@@ -5608,7 +5595,7 @@ impl WillContract {
     /// - Because the pre-image is bound to `claimant` and `claimant` must
     ///   authorize the call, an attacker who observes the pre-image in a
     ///   pending or past transaction cannot resubmit it with their own
-    ///   address as the recipient ([`WillError::InvalidPreimage`]).
+    ///   address as the recipient ([`WillError::PreimageAddressMismatch`]).
     /// - Soroban authorization entries carry their own nonce and expiration
     ///   ledger, so the signed invocation itself cannot be replayed.
     /// ## Pre-image layout
@@ -5620,23 +5607,11 @@ impl WillContract {
     /// bytes 32..64  a random 32-byte salt chosen by the beneficiary
     /// ```
     ///
-    /// The **address fingerprint** is
-    /// `sha256(xdr(beneficiary_address))[0..32]` — the first
-    /// [`PREIMAGE_ADDRESS_LENGTH`] bytes of the SHA-256 digest of the
-    /// beneficiary address's XDR encoding. `reveal_and_claim` recomputes it
-    /// from `claimant` and requires the two to be equal (#369).
-    ///
-    /// Earlier documentation described these first 32 bytes as "the raw bytes
-    /// of the beneficiary `Address`". That was never implementable as written:
-    /// a Soroban address does not serialise to 32 bytes (`Address::to_xdr`
-    /// yields a tagged XDR encoding — 36 bytes for a contract account — and a
-    /// different length for an account or muxed account), so no conforming
-    /// pre-image could ever be decoded back into an address. A fixed 32-byte
-    /// fingerprint of the address is the same length the pre-image layout has
-    /// always reserved, is computable by the beneficiary at registration
-    /// time, and is not invertible: to replay someone else's pre-image an
-    /// attacker would have to find an address whose SHA-256 digest collides
-    /// with theirs.
+    /// Compute the fingerprint as the full `sha256(xdr(beneficiary))` digest.
+    /// The XDR is the Stellar `ScVal::Address` encoding returned by
+    /// `Address::to_xdr`. Concatenate the digest and exactly 32 random salt bytes,
+    /// then store `sha256(preimage)` as the commitment. The earlier recipe
+    /// that concatenated raw address XDR with salt is incompatible with this layout.
     ///
     /// The total length is checked first; anything else is rejected with
     /// [`WillError::InvalidPreimageLength`] (#370).
@@ -5651,7 +5626,7 @@ impl WillContract {
     /// the pre-image — a keeper bot, a block explorer, a mempool watcher —
     /// could replay it with their *own* address and take the reserved share
     /// before the real beneficiary ever got a transaction confirmed. Requiring
-    /// `decode(preimage[0..32]) == claimant` makes the reveal useless to
+    /// `preimage[0..32] == sha256(xdr(claimant))` makes the reveal useless to
     /// anyone but the address it commits to.
     ///
     /// This entrypoint works once the will is `Released`: `distribute()`
@@ -5677,24 +5652,20 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to claim from.
     /// - `claimant`: the address that will receive the funds. Must authorise,
-    ///   and must be the address encoded in the first 32 bytes of `preimage`.
+    ///   and its address fingerprint must match the first 32 bytes of `preimage`.
     /// - `preimage`: raw bytes of exactly [`PREIMAGE_LENGTH`] bytes whose
     ///   SHA-256 must match a stored commitment.
     ///
     /// # Panics
-    /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
-    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
-    /// - [`WillError::InvalidPreimage`] if no matching commitment is found, or
-    ///   the pre-image is not prefixed with the XDR encoding of `claimant`.
     /// - [`WillError::WillNotReleased`] if the will is not `Released`.
+    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
     /// - [`WillError::InvalidPreimageLength`] if `preimage` is not exactly
     ///   [`PREIMAGE_LENGTH`] bytes. Checked before hashing, so the empty, short
     ///   or over-long pre-image fails with this error rather than the generic
     ///   [`WillError::InvalidPreimage`] (#370).
     /// - [`WillError::PreimageAddressMismatch`] if the first 32 bytes of
-    ///   `preimage` are not a valid `Address`, or decode to an address other
-    ///   than `claimant` (#369). Checked before hashing, so a stolen pre-image
-    ///   is rejected without ever reaching the commitment lookup.
+    ///   `preimage` do not match `sha256(xdr(claimant))` (#369). Checked before
+    ///   hashing the full pre-image or looking up the commitment.
     /// - [`WillError::InvalidPreimage`] if a correctly-sized pre-image matches no
     ///   stored commitment.
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.

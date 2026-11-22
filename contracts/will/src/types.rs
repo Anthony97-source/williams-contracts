@@ -82,17 +82,16 @@ pub struct Guardian {
 
 /// A privacy-preserving beneficiary entry (issue #46).
 ///
-/// Instead of a raw address the owner stores a SHA-256 commitment hash of the
-/// pre-image `<address.to_xdr()> || <salt_bytes>`. At claim time the
-/// beneficiary calls `reveal_and_claim` with the pre-image. The contract checks
-/// that the pre-image's address prefix is the caller's own address, checks that
-/// its hash matches the stored commitment, and pays out to that address
-/// (issue #452).
+/// The commitment is `sha256(sha256(xdr(beneficiary)) || salt)`. Here
+/// `xdr(beneficiary)` is the Stellar `ScVal::Address` encoding returned by
+/// `Address::to_xdr`, and `salt` is exactly 32 random bytes. The beneficiary
+/// reveals the 64-byte address digest and salt to claim the reserved share.
+///
+/// See SECURITY.md for Rust and JavaScript examples and test vectors.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HashedBeneficiary {
-    /// 32-byte SHA-256 hash of the pre-image (XDR-encoded address concatenated
-    /// with salt).
+    /// 32-byte SHA-256 digest of the address fingerprint followed by the salt.
     pub commitment: Bytes,
     /// Percentage of the will's balance this beneficiary receives.
     pub percentage: u32,
