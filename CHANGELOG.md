@@ -10,6 +10,9 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+- Cap new hashed beneficiary registrations at ten per will. Existing
+  commitments remain claimable and oversized wills cannot be cloned (#201).
+
 ### Security
 - `release_inheritance` re-reads the will from storage and re-validates that
   it is still `Triggered` (with a recorded `trigger_time`) immediately before
