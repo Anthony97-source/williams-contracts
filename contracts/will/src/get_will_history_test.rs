@@ -227,9 +227,9 @@ fn history_pages_walk_the_whole_trail_without_gaps_or_duplicates() {
     // received; entries with seq strictly greater than that are returned next.
     const PAGE: u32 = 4;
     let mut walked: Vec<WillStatusTransition> = Vec::new(&env);
-    let mut cursor: Option<u32> = None;
+    let mut cursor: Option<u64> = None;
     loop {
-        let page = client.get_will_history_page(&will_id, &cursor, &PAGE);
+        let page = client.get_will_history_page_v2(&will_id, &cursor, &PAGE);
         if page.is_empty() {
             break;
         }
