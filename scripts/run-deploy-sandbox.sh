@@ -54,7 +54,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ── Check dependencies ───────────────────────────────────────────────────────
-for cmd in docker stellar; do
+for cmd in docker stellar curl; do
     command -v "$cmd" >/dev/null 2>&1 || {
         echo "error: '$cmd' not found on PATH." >&2
         exit 1
@@ -73,15 +73,63 @@ docker run --detach \
     --standalone \
     --enable-soroban-rpc 2>&1 | tail -1
 
-# Wait for the RPC to be ready (up to 60 s).
+# ── Probe RPC health via JSON-RPC getHealth ──────────────────────────────────
+# The Soroban RPC endpoint is POST-only; a bare GET returns HTTP 405.  We submit
+# an explicit read-only `getHealth` JSON-RPC request and only treat the service
+# as ready when it returns HTTP 200 with a JSON-RPC result whose status is
+# "healthy".  JSON-RPC errors, malformed bodies and HTTP errors do not pass.
+HEALTH_BODY='{"jsonrpc":"2.0","id":1,"method":"getHealth","params":{}}'
+
+# probe_health prints a short, credential-free diagnostic and returns 0 only
+# when the service reports a healthy JSON-RPC result.
+probe_health() {
+    local response http_code body
+    response="$(curl --silent --show-error \
+        --connect-timeout 2 --max-time 5 \
+        --request POST \
+        --header 'Content-Type: application/json' \
+        --data "$HEALTH_BODY" \
+        --write-out '\n%{http_code}' \
+        "$RPC_URL" 2>&1)" || {
+        echo "unreachable: ${response//$'\n'/ }"
+        return 1
+    }
+
+    http_code="${response##*$'\n'}"
+    body="${response%$'\n'*}"
+
+    if [[ "$http_code" != "200" ]]; then
+        echo "HTTP $http_code: ${body:0:200}"
+        return 1
+    fi
+
+    # Validate the JSON-RPC envelope and health status without a JSON parser.
+    if [[ "$body" == *'"error"'* ]]; then
+        echo "JSON-RPC error: ${body:0:200}"
+        return 1
+    fi
+    if [[ "$body" != *'"result"'* ]]; then
+        echo "malformed response (no result): ${body:0:200}"
+        return 1
+    fi
+    if [[ "$body" != *'"status"'*'"healthy"'* ]]; then
+        echo "unhealthy status: ${body:0:200}"
+        return 1
+    fi
+
+    return 0
+}
+
 log "Waiting for Soroban RPC to be ready …"
+LAST_DIAG=""
 for i in $(seq 1 60); do
-    if curl --silent --fail "${RPC_URL}" >/dev/null 2>&1; then
+    if LAST_DIAG="$(probe_health)"; then
         log "RPC ready after ${i}s."
         break
     fi
     if [[ $i -eq 60 ]]; then
         echo "error: Soroban RPC at $RPC_URL did not become ready within 60 s." >&2
+        echo "       last response: ${LAST_DIAG:-<none>}" >&2
         exit 1
     fi
     sleep 1
