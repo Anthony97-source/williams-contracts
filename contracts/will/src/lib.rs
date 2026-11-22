@@ -407,6 +407,27 @@ mod issue_57_58_59_60_test;
 mod migrate_will_test;
 #[cfg(test)]
 mod issue_110_test;
+
+#[cfg(test)]
+mod issue_101_test;
+
+#[cfg(test)]
+mod issue_102_test;
+
+#[cfg(test)]
+mod issue_103_test;
+
+#[cfg(test)]
+mod issue_104_test;
+
+#[cfg(test)]
+mod issue_105_test;
+
+#[cfg(test)]
+mod issue_107_test;
+
+#[cfg(test)]
+mod issue_108_test;
 #[cfg(test)]
 mod protocol_stats_test;
 #[cfg(test)]
