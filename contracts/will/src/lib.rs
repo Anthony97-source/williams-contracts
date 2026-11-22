@@ -5016,7 +5016,7 @@ impl WillContract {
     /// For the full, untrimmed history, follow the off-chain event log: every
     /// state-mutating entry point publishes an event, and that log is never
     /// trimmed. Callers who want to walk the retained trail in bounded slices
-    /// should prefer [`WillContract::get_will_history_page`].
+    /// should prefer [`WillContract::get_will_history_page_v2`].
     pub fn get_will_history(env: Env, will_id: u64) -> Vec<WillStatusTransition> {
         storage::get_history(&env, will_id)
     }
@@ -5028,30 +5028,25 @@ impl WillContract {
     /// trail is itself capped at [`storage::MAX_HISTORY_ENTRIES`] transitions
     /// (#392); this bounds the *per-call* cost on top of that.
     ///
-    /// # Parameters
-    /// - `will_id`: the will whose trail to read.
-    /// - `cursor`: optional sequence number (`WillStatusTransition::seq`).
-    ///   Only entries with `seq` **strictly greater than** the cursor are
-    ///   returned; pass `None` or `Some(0)` to start from the beginning.
-    ///   To page forward, pass the `seq` of the last entry received as the
-    ///   next cursor.
-    /// - `limit`: maximum number of transitions to return. Capped at
-    ///   [`storage::MAX_PAGE_SIZE`].
-    ///
-    /// # Pagination
-    /// 1. Call with `cursor=None, limit=N`.
-    /// 2. If the page has `N` entries, call again with
-    ///    `cursor = Some(last_entry.seq as u32)`.
-    /// 3. Repeat until a page comes back shorter than `N`.
-    ///
-    /// The seq-based cursor is stable across history trimming: when the oldest
-    /// entries are dropped to enforce the cap, no existing `seq` value shifts,
-    /// so a stored cursor never silently skips or re-reads entries on the next
-    /// call (#59).
+    /// This compatibility entry point accepts u32 cursors. Use
+    /// [`Self::get_will_history_page_v2`] for the full sequence range.
     pub fn get_will_history_page(
         env: Env,
         will_id: u64,
         cursor: Option<u32>,
+        limit: u32,
+    ) -> Vec<WillStatusTransition> {
+        storage::paginate_history(&env, will_id, cursor.map(u64::from), limit)
+    }
+
+    /// Returns up to `limit` retained history entries after the exclusive
+    /// u64 sequence cursor. Pass `None` or `Some(0)` for the first page.
+    /// To continue, pass the last returned entry's `seq` unchanged. Sequence
+    /// numbers remain stable as old entries are trimmed.
+    pub fn get_will_history_page_v2(
+        env: Env,
+        will_id: u64,
+        cursor: Option<u64>,
         limit: u32,
     ) -> Vec<WillStatusTransition> {
         storage::paginate_history(&env, will_id, cursor, limit)
