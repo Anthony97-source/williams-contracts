@@ -25,16 +25,48 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 NETWORK="local"
-IDENTITY="integration-test"
 WASM_PATH="target/wasm32v1-none/release/will.wasm"
+
+# Isolate all stellar-cli state (keys, network config) for this run so we never
+# touch the user's existing identities or network aliases, and so parallel runs
+# do not interfere with each other.
+CLI_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/will-integration.XXXXXX")"
+export STELLAR_CONFIG_DIR="$CLI_CONFIG_DIR"
+export HOME="$CLI_CONFIG_DIR"
+
+# Unique per-run aliases so we never collide with (or overwrite) preexisting
+# identities or network aliases.
+RUN_SUFFIX="$$"
+IDENTITY="integration-test-$RUN_SUFFIX"
+BENEFICIARY="beneficiary-tmp-$RUN_SUFFIX"
+
+# Ownership tracking: only clean up resources this run actually created.
+network_started=0
+identity_created=0
+beneficiary_created=0
 
 log() {
   printf '\n\033[1;34m[integration]\033[0m %s\n' "$1"
 }
 
 cleanup() {
-  log "Stopping local Soroban network"
-  stellar network stop "$NETWORK" >/dev/null 2>&1 || true
+  local status=$?
+  if [ "$beneficiary_created" -eq 1 ]; then
+    log "Removing test beneficiary identity $BENEFICIARY"
+    stellar keys remove "$BENEFICIARY" >/dev/null 2>&1 || true
+  fi
+  if [ "$identity_created" -eq 1 ]; then
+    log "Removing test identity $IDENTITY"
+    stellar keys remove "$IDENTITY" >/dev/null 2>&1 || true
+  fi
+  if [ "$network_started" -eq 1 ]; then
+    log "Stopping local Soroban network"
+    stellar network stop "$NETWORK" >/dev/null 2>&1 || true
+  fi
+  if [ -n "${CLI_CONFIG_DIR:-}" ] && [ -d "$CLI_CONFIG_DIR" ]; then
+    rm -rf "$CLI_CONFIG_DIR"
+  fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -49,9 +81,11 @@ fi
 log "Starting local Soroban standalone network"
 stellar network start "$NETWORK" --limits testnet >/dev/null 2>&1 || \
   stellar network start "$NETWORK"
+network_started=1
 
 log "Generating a funded identity for the test run"
-stellar keys generate "$IDENTITY" --network "$NETWORK" --fund --overwrite
+stellar keys generate "$IDENTITY" --network "$NETWORK" --fund
+identity_created=1
 
 OWNER_ADDR="$(stellar keys address "$IDENTITY")"
 
@@ -73,7 +107,9 @@ if [ -z "$TOKEN_ID" ]; then
   exit 1
 fi
 
-BENEFICIARY_ADDR="$(stellar keys generate beneficiary-tmp --network "$NETWORK" --fund --overwrite && stellar keys address beneficiary-tmp)"
+stellar keys generate "$BENEFICIARY" --network "$NETWORK" --fund
+beneficiary_created=1
+BENEFICIARY_ADDR="$(stellar keys address "$BENEFICIARY")"
 
 log "create_will: locking 1000 stroops for one beneficiary, 1-day check-in / 1-day grace"
 WILL_ID="$(stellar contract invoke \

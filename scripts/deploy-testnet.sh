@@ -16,13 +16,19 @@
 #                      pay for the deployment. Must already exist and be
 #                      funded on testnet.
 #   NETWORK            Optional. Soroban network alias. Default: testnet
-#   RPC_URL             Optional. Soroban RPC endpoint.
+#                      Must be one of: testnet, futurenet, mainnet, sandbox.
+#   RPC_URL             Optional. Soroban RPC endpoint. Must be consistent
+#                      with NETWORK (see NETWORK_RPC_DEFAULTS below).
 #                        Default: https://soroban-testnet.stellar.org
+#   OUTPUT_FILE         Optional. Deployment artifact path. Defaults to
+#                      deployments/<NETWORK>.json, so a non-testnet run can
+#                      never overwrite deployments/testnet.json.
 #
 # Usage:
 #   DEPLOY_IDENTITY=deployer ./scripts/deploy-testnet.sh
 #
-# After it finishes, review and commit the updated deployments/testnet.json
+# After it finishes, review and commit the updated deployment artifact
+# (deployments/testnet.json for the default network)
 # — see CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy.
 #
 # Version consistency (#501): CONTRACT_VERSION being correct in source is not
@@ -46,10 +52,36 @@ cd "$ROOT_DIR"
 
 : "${DEPLOY_IDENTITY:?Set DEPLOY_IDENTITY to a funded stellar-cli identity name, e.g. DEPLOY_IDENTITY=deployer ./scripts/deploy-testnet.sh}"
 NETWORK="${NETWORK:-testnet}"
-RPC_URL="${RPC_URL:-https://soroban-testnet.stellar.org}"
+
+# Known networks and their canonical RPC endpoints. Keeping this mapping in
+# one place lets us reject unknown networks and catch a NETWORK/RPC_URL
+# mismatch before any transaction is submitted.
+declare -A NETWORK_RPC_DEFAULTS=(
+  [testnet]="https://soroban-testnet.stellar.org"
+  [futurenet]="https://rpc-futurenet.stellar.org"
+  [mainnet]="https://soroban-rpc.mainnet.stellar.gateway.fm"
+  [sandbox]="http://localhost:8000/soroban/rpc"
+)
+
+if [[ -z "${NETWORK_RPC_DEFAULTS[$NETWORK]+set}" ]]; then
+  echo "error: unsupported NETWORK '$NETWORK'. Supported networks: ${!NETWORK_RPC_DEFAULTS[*]}" >&2
+  exit 1
+fi
+
+RPC_URL="${RPC_URL:-${NETWORK_RPC_DEFAULTS[$NETWORK]}}"
 WASM_PATH="target/wasm32v1-none/release/will.wasm"
-OUTPUT_FILE="deployments/testnet.json"
+# Network-specific artifact path: a non-testnet run writes its own file and
+# can never silently overwrite deployments/testnet.json.
+OUTPUT_FILE="${OUTPUT_FILE:-deployments/${NETWORK}.json}"
 LIB_RS="contracts/will/src/lib.rs"
+
+# Guard against an explicit OUTPUT_FILE that would clobber the testnet record
+# from a non-testnet run.
+if [[ "$NETWORK" != "testnet" && "$OUTPUT_FILE" == "deployments/testnet.json" ]]; then
+  echo "error: refusing to write a '$NETWORK' deployment to $OUTPUT_FILE (the testnet record)." >&2
+  echo "error: unset OUTPUT_FILE to use the default deployments/${NETWORK}.json." >&2
+  exit 1
+fi
 
 command -v stellar >/dev/null 2>&1 || {
   echo "error: stellar-cli not found on PATH. Install it with:" >&2
@@ -134,17 +166,20 @@ else
 fi
 echo "==> Deployed WASM SHA-256: $DEPLOYED_WASM_HASH"
 
-if [[ "$DEPLOYED_WASM_HASH" != "$LOCAL_WASM_HASH" ]]; then
-  echo "error: deployed bytecode hash $DEPLOYED_WASM_HASH does not match local WASM hash $LOCAL_WASM_HASH" >&2
+if [[ "$DEPLOYED_WASM_HASH" != "$WASM_HASH" ]]; then
+  echo "error: deployed bytecode hash $DEPLOYED_WASM_HASH does not match local WASM hash $WASM_HASH" >&2
   echo "error: the deployed contract does not match the audited local build -- do NOT record this in $OUTPUT_FILE." >&2
   exit 1
 fi
 echo "==> OK: deployed bytecode hash matches local WASM SHA-256"
 
+mkdir -p "$(dirname "$OUTPUT_FILE")"
 cat > "$OUTPUT_FILE" <<JSON
 {
   "WillContract": "$CONTRACT_ID",
   "network": "$NETWORK",
+  "rpcUrl": "$RPC_URL",
+  "identity": "$DEPLOY_IDENTITY",
   "deployedAt": "$DEPLOYED_AT",
   "wasmHash": "$WASM_HASH"
 }
@@ -154,5 +189,5 @@ echo "==> Wrote $OUTPUT_FILE"
 echo
 echo "Next steps:"
 echo "  1. Review the diff: git diff -- $OUTPUT_FILE"
-echo "  2. Commit it on its own: git add $OUTPUT_FILE && git commit -m 'chore: record testnet deployment $CONTRACT_ID'"
+echo "  2. Commit it on its own: git add $OUTPUT_FILE && git commit -m 'chore: record $NETWORK deployment $CONTRACT_ID'"
 echo "  3. See CONTRIBUTING.md#updating-deploymentstestnetjson-after-a-redeploy for the full checklist."
