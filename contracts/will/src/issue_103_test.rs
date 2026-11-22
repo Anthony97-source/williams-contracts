@@ -62,9 +62,9 @@ fn create_will_rejects_sub_threshold_confirmation_delay() {
     let err = client
         .try_create_will(
             &owner,
-            &vec![env, (token_address.clone(), 1_000_000_i128)],
+            &vec![&env, (token_address.clone(), 1_000_000_i128)],
             &vec![
-                env,
+                &env,
                 Beneficiary {
                     address: heir.clone(),
                     allocation: Allocation::Percentage(10_000),
@@ -72,7 +72,7 @@ fn create_will_rejects_sub_threshold_confirmation_delay() {
             ],
             &90,
             &7,
-            &vec![env],
+            &vec![&env],
             &0,
             &None,
             &5, // below MIN_CONFIRMATION_DELAY (300s)

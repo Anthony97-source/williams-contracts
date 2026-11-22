@@ -34,7 +34,7 @@ fn make_failed_payout(
 ) -> (u64, Address) {
     let token_id = env.register(FailableToken, ());
     let token_client = FailableTokenClient::new(env, &token_id);
-    token_client.mint(owner, amount);
+    token_client.mint(owner, &amount);
 
     let will_id = client.create_will(
         owner,
