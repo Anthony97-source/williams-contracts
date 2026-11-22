@@ -10,6 +10,9 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+- Apply the 60-second check-in interval to batches. The batch event lists
+  only wills that were updated and is omitted when none were eligible (#202).
+
 ### Security
 - `release_inheritance` re-reads the will from storage and re-validates that
   it is still `Triggered` (with a recorded `trigger_time`) immediately before

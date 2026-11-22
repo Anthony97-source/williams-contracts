@@ -505,12 +505,12 @@ pub use types::{
 /// so that SDKs and apps can detect version mismatches at runtime via
 /// [`WillContract::get_contract_version`].
 ///
-/// Current value: **1.3.0** → `1_003_000`. 1.1.0 made `get_triggered_wills`
+/// Current value: **1.3.1** → `1_003_001`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
 /// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
 /// `batch_check_in` append audit-trail entries (#500).
-pub const CONTRACT_VERSION: u32 = 1_003_000;
+pub const CONTRACT_VERSION: u32 = 1_003_001;
 
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
@@ -668,7 +668,7 @@ soroban_sdk::contractmeta!(
 );
 // Kept in sync with CONTRACT_VERSION's semver-decoded form by
 // issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.0");
+soroban_sdk::contractmeta!(key = "Version", val = "1.3.1");
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/Williams/williams-contracts"
@@ -1382,51 +1382,10 @@ impl WillContract {
     /// ```
     pub fn check_in(env: Env, will_id: u64, caller: Address) {
         caller.require_auth();
-        let mut will = load_will(&env, will_id);
-        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-        assert_owner_or_delegate(&env, &will, &caller);
-
         let now = env.ledger().timestamp();
-
-        // Rate-limit state updates: only refresh `last_checkin` if at least
-        // `MIN_CHECKIN_INTERVAL` has elapsed since the last check-in.
-        // Consecutive check-ins within the same window are no-ops that avoid
-        // redundant history writes (#101).
-        if now < will.last_checkin.saturating_add(MIN_CHECKIN_INTERVAL) {
-            return;
+        if record_check_in(&env, will_id, &caller, now) {
+            storage::bump_instance_ttl(&env);
         }
-
-        will.last_checkin = now;
-        let next_deadline = checked_add_timestamp(
-            &env,
-            now,
-            checked_days_to_seconds(&env, will.checkin_period_days),
-        );
-        storage::save_will(&env, &will);
-        storage::bump_instance_ttl(&env);
-
-        // Refresh the owner index TTL on every check-in so that an account
-        // inactive for longer than BUMP_AMOUNT ledgers (roughly 60 days) does
-        // not find its OwnerWills entry expired the next time it calls
-        // create_will (#41).
-        storage::refresh_owner_index_ttl(&env, &will.owner);
-
-        // Record the check-in in the same audit trail status transitions use
-        // (#500). `status` does not change, so this is a same-status entry
-        // (`Active` -> `Active`); what matters is that every event that moves
-        // `last_checkin` -- not just the ones that also move `status` -- gets
-        // a sequenced entry, so a reader of the trail never sees a status
-        // change following a check-in that left no trace of when it happened.
-        record_transition(
-            &env,
-            will_id,
-            WillStatus::Active,
-            WillStatus::Active,
-            &caller,
-            symbol_short!("checkin"),
-        );
-
-        events::check_in(&env, will_id, &caller, next_deadline);
     }
 
     /// Sets or replaces the delegate address for `will_id`. Only callable
@@ -1526,6 +1485,10 @@ impl WillContract {
     /// for a principal) to batch check-ins without forcing individual calls
     /// per will (#3).
     ///
+    /// Wills checked in less than 60 seconds ago are validated but skipped.
+    /// The batch event lists only updated IDs, in input order, and is emitted
+    /// only if at least one will was updated.
+    ///
     /// At most `batch_check_in_limit::MAX_BATCH_CHECK_IN` (50) IDs are accepted
     /// per call; longer inputs panic with [`WillError::BatchTooLarge`]. Every ID
     /// must also be distinct — a repeated ID panics with
@@ -1544,43 +1507,20 @@ impl WillContract {
     pub fn batch_check_in(env: Env, will_ids: Vec<u64>, caller: Address) {
         caller.require_auth();
         batch_check_in_limit::assert_within_limit(&env, will_ids.len());
-        // Reject repeats before any storage write, so a batch can never be
-        // partially applied and the `batch_checkin` count always matches the
-        // number of distinct wills actually checked in (#355).
         batch_check_in_limit::assert_no_duplicates(&env, &will_ids);
         let now = env.ledger().timestamp();
-        let count = will_ids.len();
+        let mut updated = Vec::new(&env);
 
         for will_id in will_ids.iter() {
-            let mut will = load_will(&env, will_id);
-            assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-            assert_owner_or_delegate(&env, &will, &caller);
-
-            will.last_checkin = now;
-            let next_deadline = checked_add_timestamp(
-                &env,
-                now,
-                checked_days_to_seconds(&env, will.checkin_period_days),
-            );
-            storage::save_will(&env, &will);
-
-            // Same per-will audit entry as the single-will `check_in` path,
-            // so a batched check-in is indistinguishable in the trail from
-            // one done individually (#500).
-            record_transition(
-                &env,
-                will_id,
-                WillStatus::Active,
-                WillStatus::Active,
-                &caller,
-                symbol_short!("checkin"),
-            );
-
-            events::check_in(&env, will_id, &caller, next_deadline);
+            if record_check_in(&env, will_id, &caller, now) {
+                updated.push_back(will_id);
+            }
         }
 
-        events::batch_checkin(&env, &caller, &will_ids, count);
-        storage::bump_instance_ttl(&env);
+        if !updated.is_empty() {
+            events::batch_checkin(&env, &caller, &updated, updated.len());
+            storage::bump_instance_ttl(&env);
+        }
     }
 
     /// Starts the grace period for `will_id` once the check-in deadline has
@@ -6076,6 +6016,36 @@ fn assert_no_guardian_cancel_in_flight(env: &Env, will: &Will) {
     if will.guardian_cancel_votes > 0 || will.guardian_cancel_vote_weight > 0 {
         panic_with_error!(env, WillError::GuardianCancelInProgress);
     }
+}
+
+/// Validates and applies a check-in, returning whether it updated the will.
+fn record_check_in(env: &Env, will_id: u64, caller: &Address, now: u64) -> bool {
+    let mut will = load_will(env, will_id);
+    assert_status(env, &will, WillStatus::Active, WillError::WillNotActive);
+    assert_owner_or_delegate(env, &will, caller);
+
+    if now < will.last_checkin.saturating_add(MIN_CHECKIN_INTERVAL) {
+        return false;
+    }
+
+    will.last_checkin = now;
+    let next_deadline = checked_add_timestamp(
+        env,
+        now,
+        checked_days_to_seconds(env, will.checkin_period_days),
+    );
+    storage::save_will(env, &will);
+    storage::refresh_owner_index_ttl(env, &will.owner);
+    record_transition(
+        env,
+        will_id,
+        WillStatus::Active,
+        WillStatus::Active,
+        caller,
+        symbol_short!("checkin"),
+    );
+    events::check_in(env, will_id, caller, next_deadline);
+    true
 }
 
 /// Byte length of a SHA-256 digest, i.e. of a `HashedBeneficiary` commitment.

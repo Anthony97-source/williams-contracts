@@ -44,6 +44,8 @@ data, in order.
 | `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128)` |
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
 
+The `batchchk` event lists only wills updated by the batch, in input order. No summary is emitted when every will is skipped.
+
 ## `archived`
 
 `archive_will` moves a `Released`, `Cancelled` or `Settled` will out of active storage
