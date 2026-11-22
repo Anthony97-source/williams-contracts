@@ -505,12 +505,12 @@ pub use types::{
 /// so that SDKs and apps can detect version mismatches at runtime via
 /// [`WillContract::get_contract_version`].
 ///
-/// Current value: **1.3.0** → `1_003_000`. 1.1.0 made `get_triggered_wills`
+/// Current value: **1.4.0** → `1_004_000`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
 /// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
 /// `batch_check_in` append audit-trail entries (#500).
-pub const CONTRACT_VERSION: u32 = 1_003_000;
+pub const CONTRACT_VERSION: u32 = 1_004_000;
 
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
@@ -668,7 +668,7 @@ soroban_sdk::contractmeta!(
 );
 // Kept in sync with CONTRACT_VERSION's semver-decoded form by
 // issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.0");
+soroban_sdk::contractmeta!(key = "Version", val = "1.4.0");
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/Williams/williams-contracts"
