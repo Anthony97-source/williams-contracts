@@ -449,3 +449,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-189 -->
 - #189: Keep hashed claim payouts from subtracting already removed protocol totals
+
+<!-- handsoff-issue-190 -->
+- #190: Define an allocation-preserving policy for merges with different token portfolios
