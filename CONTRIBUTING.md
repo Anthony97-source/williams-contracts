@@ -74,12 +74,11 @@ Run it locally before opening a PR:
 ./.github/scripts/check-contract-version.sh
 ```
 
-CI runs the same check on every PR (see the "Verify CONTRACT_VERSION matches
-git version tag" step in
-[.github/workflows/test.yml](./.github/workflows/test.yml)), so a PR that
-changes contract behavior without bumping `CONTRACT_VERSION`
-fails before it can be merged. This prevents the source constant from drifting
-away from the deployed contract version when deployment steps are skipped.
+The [Test & Build workflow](./.github/workflows/test.yml) runs the version
+check and, for pull requests, checks that `CHANGELOG.md` changes when
+`CONTRACT_VERSION` changes. The changelog guard compares the PR merge
+checkout with the base commit from the pull request event. Reviewers still
+verify that behavioral changes include a version bump.
 
 ## Storage schema versioning
 
