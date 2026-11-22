@@ -477,6 +477,21 @@ pub fn payout_failed(env: &Env, will_id: u64, token: &Address, recipient: &Addre
     );
 }
 
+/// Published when an owner refund is deferred because the token refused the
+/// transfer during `cancel_will`, `refund_unconfirmed_will` or
+/// `guardian_cancel_pending_will` (#213).
+///
+/// The refund is recorded in storage exactly like a failed beneficiary payout
+/// and can be recovered later via `retry_failed_payout`; every other token in
+/// the same refund loop is unaffected. Indexers can track deferred owner
+/// refunds the same way they track deferred beneficiary payouts.
+pub fn owner_refund_failed(env: &Env, will_id: u64, token: &Address, owner: &Address, amount: i128) {
+    env.events().publish(
+        (symbol_short!("ownfail"), will_id),
+        (token.clone(), owner.clone(), amount),
+    );
+}
+
 /// Published when `retry_failed_payout` successfully delivers a previously
 /// failed payout (#459). The `fully_resolved` flag indicates whether this
 /// retry cleared the recorded failed payout for the exact

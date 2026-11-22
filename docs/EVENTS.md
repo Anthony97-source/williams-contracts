@@ -40,7 +40,7 @@ data, in order.
 | `batch` | `batch_create_wills` (second topic is `owner`) | `will_ids: Vec<u64>` |
 | `split` | `split_will` (topic is the original id) | `(new_id: u64, owner: Address, split_amount: i128)` |
 | `hclaim` | `reveal_and_claim` | `(claimant: Address, amount: i128)` |
-| `payfail` | `distribute`, `reveal_and_claim` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
+| `payfail` | `distribute`, `reveal_and_claim`, `cancel_will`, `refund_unconfirmed_will`, `guardian_cancel_pending_will` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
 | `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128)` |
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
 
@@ -70,6 +70,38 @@ never to receive a stale or historical timestamp.
 - `checkin_period_days`: updated check-in period in days.
 - `grace_period_days`: updated grace period in days.
 - `next_deadline`: ledger timestamp (Unix seconds) for the next check-in deadline (`now + checkin_period_days * 86_400`), guaranteed to be strictly in the future.
+
+## Failed payouts and deferred owner refunds
+
+`payfail` is published whenever a token transfer cannot be delivered and the
+amount is instead recorded as a deferred payout. This covers beneficiary
+distributions (`distribute`, `reveal_and_claim`) and owner refunds
+(`cancel_will`, `refund_unconfirmed_will`, `guardian_cancel_pending_will`).
+Owner refunds are isolated per token: a token that refuses transfer no longer
+rolls back refunds of the other tokens, and the undelivered amount is recorded
+exactly once as a recoverable deferred payout.
+
+Events are not authoritative for outstanding amounts. A deferred payout can be
+retried (`payretry`) or redirected (`payredir`), so an indexer that only replays
+events may hold a stale amount. Clients should query the read-only getter
+`get_failed_payout_amount(will_id, token, recipient)` for the current recorded
+amount of an exact tuple. It returns `Option<i128>`: `Some(amount)` while the
+payout is still outstanding and `None` once the tuple is missing or has been
+resolved (retried or redirected). The query is bounded to a single tuple, does
+not mutate state, and keeps working after the parent will has been archived,
+because payout records are independent of the will's lifecycle.
+
+## Guardian cancellation votes
+
+`gcvote` and `gcancel` describe cancellation votes during a `Triggered`
+recovery. As with deferred payouts, events can become stale as votes expire or
+are reset by a successful cancellation. Guardians and recovery dashboards
+should query `get_guardian_cancel_vote_status(will_id, guardian)` for the
+authoritative live record. It is a read-only, bounded query that applies the
+same expiry and consent rules as cancellation tallying, distinguishes cancel
+votes from trigger votes (`get_guardian_vote_status`), and reports expired or
+withdrawn votes consistently with the quorum rules. It requires no
+authorization and performs no state mutation.
 
 ## Failed operations
 
