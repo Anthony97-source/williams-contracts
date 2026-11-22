@@ -446,3 +446,6 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-188 -->
 - #188: Avoid the overflowing multiplication in hashed pool share calculation
+
+<!-- handsoff-issue-189 -->
+- #189: Keep hashed claim payouts from subtracting already removed protocol totals
