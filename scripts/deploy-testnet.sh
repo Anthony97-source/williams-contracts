@@ -60,8 +60,8 @@ command -v stellar >/dev/null 2>&1 || {
 echo "==> Checking CONTRACT_VERSION is consistent with Cargo.toml before building"
 "$ROOT_DIR/.github/scripts/check-contract-version.sh"
 
-echo "==> Building contract for wasm32v1-none (release)"
-cargo build --package will --release --target wasm32v1-none
+echo "==> Building contract for wasm32v1-none (release, locked, canonical flags)"
+"$ROOT_DIR/scripts/build-wasm.sh" --package will
 
 if [[ ! -f "$WASM_PATH" ]]; then
   echo "error: expected wasm artifact at $WASM_PATH, but it was not produced" >&2
@@ -134,8 +134,8 @@ else
 fi
 echo "==> Deployed WASM SHA-256: $DEPLOYED_WASM_HASH"
 
-if [[ "$DEPLOYED_WASM_HASH" != "$LOCAL_WASM_HASH" ]]; then
-  echo "error: deployed bytecode hash $DEPLOYED_WASM_HASH does not match local WASM hash $LOCAL_WASM_HASH" >&2
+if [[ "$DEPLOYED_WASM_HASH" != "$WASM_HASH" ]]; then
+  echo "error: deployed bytecode hash $DEPLOYED_WASM_HASH does not match local WASM hash $WASM_HASH" >&2
   echo "error: the deployed contract does not match the audited local build -- do NOT record this in $OUTPUT_FILE." >&2
   exit 1
 fi

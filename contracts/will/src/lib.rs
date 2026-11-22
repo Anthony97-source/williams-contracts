@@ -512,6 +512,19 @@ pub use types::{
 /// `batch_check_in` append audit-trail entries (#500).
 pub const CONTRACT_VERSION: u32 = 1_003_000;
 
+/// The version string embedded in the contract's Wasm metadata under the
+/// `"Version"` key by the `contractmeta!` invocation below.
+///
+/// This is the single source of truth for the metadata version: the macro
+/// reads it directly, and `issue_272_test.rs` asserts it agrees with
+/// [`CONTRACT_VERSION`] instead of keeping an independent copy. Changing the
+/// embedded metadata version therefore necessarily changes this constant, so
+/// the test can no longer pass while the compiled metadata has drifted.
+///
+/// Current value: **1.3.0** (matching `CONTRACT_VERSION`'s semver-decoded
+/// form).
+pub const CONTRACTMETA_VERSION: &str = "1.3.0";
+
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
 const SECONDS_PER_DAY: u64 = 86_400;
@@ -666,9 +679,11 @@ soroban_sdk::contractmeta!(
     key = "Description",
     val = "Trustless on-chain inheritance and dead man's switch protocol for Stellar Soroban"
 );
-// Kept in sync with CONTRACT_VERSION's semver-decoded form by
-// issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.0");
+// Reads the shared `CONTRACTMETA_VERSION` constant rather than a second
+// literal, so the embedded metadata and the value issue_272_test.rs checks
+// cannot drift apart; bump `CONTRACT_VERSION` and `CONTRACTMETA_VERSION`
+// together.
+soroban_sdk::contractmeta!(key = "Version", val = CONTRACTMETA_VERSION);
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/Williams/williams-contracts"
