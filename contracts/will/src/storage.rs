@@ -98,6 +98,10 @@ pub(crate) enum DataKey {
     Will(u64),
     /// List of will ids owned by an address.
     OwnerWills(Address),
+    /// Discovery alias installed by portfolio migration (#207): maps the
+    /// authorization owner to the address whose indexes now hold its wills.
+    /// Authorization is never redirected — only index/discovery lookups are.
+    OwnerDiscoveryAlias(Address),
     /// List of will ids an address is named as a beneficiary of.
     BeneficiaryWills(Address),
     /// A guardian's vote record: stores `(timestamp, reason)` for time-weighted expiry.
@@ -803,9 +807,32 @@ fn assert_single_index_capacity(env: &Env, key: &DataKey) {
     }
 }
 
+/// Follows the portfolio-migration discovery aliases for `owner` (#207).
+///
+/// `migrate_owner_portfolio` moves the index entries to a new discovery
+/// address but deliberately leaves `Will.owner` unchanged (it remains the
+/// authorization/refund owner). Lifecycle writes therefore still arrive with
+/// the original owner, and must be redirected here so the destination
+/// portfolio stays coherent. The hop limit bounds the work and stops cycles.
+pub fn discovery_owner(env: &Env, owner: &Address) -> Address {
+    let mut current = owner.clone();
+    for _ in 0..8 {
+        let next: Option<Address> = env
+            .storage()
+            .persistent()
+            .get(&DataKey::OwnerDiscoveryAlias(current.clone()));
+        match next {
+            Some(next) if next != current => current = next,
+            _ => break,
+        }
+    }
+    current
+}
+
 /// Adds `will_id` to the index of wills owned by `owner`, if not already present.
 pub fn index_by_owner(env: &Env, owner: &Address, will_id: u64) {
-    index_push(env, DataKey::OwnerWills(owner.clone()), will_id);
+    let owner = discovery_owner(env, owner);
+    index_push(env, DataKey::OwnerWills(owner), will_id);
 }
 
 /// Extends the TTL of the `OwnerWills` index for `owner` without modifying
@@ -876,7 +903,8 @@ pub fn remove_beneficiary_index(env: &Env, beneficiary: &Address, will_id: u64) 
 /// Uses order-preserving removal to maintain the monotonic ordering invariant
 /// that `paginate_ids` depends on.
 pub fn remove_owner_index(env: &Env, owner: &Address, will_id: u64) {
-    let key = DataKey::OwnerWills(owner.clone());
+    let owner = discovery_owner(env, owner);
+    let key = DataKey::OwnerWills(owner);
     let Some(ids) = env.storage().persistent().get::<_, Vec<u64>>(&key) else {
         return;
     };
@@ -901,6 +929,8 @@ pub fn remove_owner_index(env: &Env, owner: &Address, will_id: u64) {
 /// read-only query from the owner's dashboard counts as activity for the
 /// purpose of keeping the index alive (issue #41).
 pub fn get_owner_wills(env: &Env, owner: &Address) -> Vec<u64> {
+    // Queries intentionally use the literal address: after migration the
+    // old owner's portfolio is empty and the destination owns the entries.
     let key = DataKey::OwnerWills(owner.clone());
     let ids: Option<Vec<u64>> = env.storage().persistent().get(&key);
     if ids.is_some() {
@@ -920,7 +950,8 @@ pub fn get_owner_wills(env: &Env, owner: &Address) -> Vec<u64> {
 /// are skipped when the id is already present, matching the behaviour of the
 /// shared `index_push` helper used by `OwnerWills`.
 pub fn index_owner_status(env: &Env, owner: &Address, status: WillStatus, will_id: u64) {
-    let key = DataKey::OwnerStatusWills(owner.clone(), status);
+    let owner = discovery_owner(env, owner);
+    let key = DataKey::OwnerStatusWills(owner, status);
     let mut ids: Vec<u64> = env
         .storage()
         .persistent()
@@ -949,7 +980,8 @@ pub fn index_owner_status(env: &Env, owner: &Address, status: WillStatus, will_i
 /// removal from the owner index on cancellation/release, or archival).
 /// Returns without writing when the id is absent.
 pub fn remove_owner_status_index(env: &Env, owner: &Address, status: WillStatus, will_id: u64) {
-    let key = DataKey::OwnerStatusWills(owner.clone(), status);
+    let owner = discovery_owner(env, owner);
+    let key = DataKey::OwnerStatusWills(owner, status);
     let Some(ids) = env.storage().persistent().get::<_, Vec<u64>>(&key) else {
         return;
     };
@@ -992,6 +1024,7 @@ pub fn transition_owner_status_index(
 /// Returns the ids from the per-owner, per-status index for `status`, also
 /// refreshing the TTL so a read-only query keeps the entry alive.
 pub fn get_owner_status_wills(env: &Env, owner: &Address, status: WillStatus) -> Vec<u64> {
+    // Literal address, matching `get_owner_wills` (issue #207).
     let key = DataKey::OwnerStatusWills(owner.clone(), status);
     let ids: Option<Vec<u64>> = env.storage().persistent().get(&key);
     if ids.is_some() {
@@ -1850,4 +1883,16 @@ pub fn migrate_owner_portfolio(env: &Env, old_owner: &Address, new_owner: &Addre
             .extend_ttl(&new_status_key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
         env.storage().persistent().remove(&old_status_key);
     }
+
+    // Issue #207: persist the discovery alias. `Will.owner` is deliberately
+    // left unchanged — it remains the authorization/refund owner — but every
+    // subsequent index write for those wills arrives under that old address.
+    // The alias redirects those writes (and dashboard reads) to the
+    // destination portfolio so migrated discovery stays coherent through
+    // trigger/cancel/release/archive. Chains (A→B→C) are followed by
+    // `discovery_owner`, so repeated migrations work without rewriting older
+    // aliases.
+    env.storage()
+        .persistent()
+        .set(&DataKey::OwnerDiscoveryAlias(old_owner.clone()), new_owner);
 }
