@@ -4894,6 +4894,17 @@ impl WillContract {
             combined_balances.set(token_addr, prev + amount);
         }
 
+        // Issue #209: validate the merged allocations against the actual
+        // merged primary balance before any state is written. This catches
+        // any residual over-allocation from tiny-share promotion and keeps
+        // merge_wills subject to the same invariant as create_will.
+        assert_valid_allocations(
+            &env,
+            &merged_beneficiaries,
+            &will_a.hashed_beneficiaries,
+            primary_token_balance(&combined_balances, &will_a.token),
+        );
+
         // Clear persistent GuardianVote/GuardianCancelVote entries for both
         // wills' *pre-merge* guardian lists before the in-memory counters are
         // zeroed below — otherwise the vote rows are orphaned in storage
@@ -7219,21 +7230,35 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
             }
         }
     } else if total_bp > 10_000 && !merged_beneficiaries.is_empty() {
-        // If we exceeded 10_000 due to giving everyone at least 1 bp, reduce the last percentage beneficiary
-        let excess = total_bp - 10_000;
+        // Issue #209: the "+1 bp for tiny positive shares" policy can push
+        // the total above 10,000. Reducing only the final entry is wrong when
+        // its value is smaller than the excess (it would be left at 1 and the
+        // over-allocation would persist). Spread the correction across every
+        // percentage entry that has headroom above its 1-bp minimum.
+        let mut excess = total_bp - 10_000;
         for i in (0..merged_beneficiaries.len()).rev() {
-            let beneficiary = merged_beneficiaries.get(i).unwrap();
-            if let Allocation::Percentage(bp) = beneficiary.allocation {
-                let new_bp = if bp > excess { bp - excess } else { 1 };
-                merged_beneficiaries.set(
-                    i,
-                    Beneficiary {
-                        address: beneficiary.address,
-                        allocation: Allocation::Percentage(new_bp),
-                    },
-                );
+            if excess == 0 {
                 break;
             }
+            let beneficiary = merged_beneficiaries.get(i).unwrap();
+            if let Allocation::Percentage(bp) = beneficiary.allocation {
+                let reduction = bp.saturating_sub(1).min(excess);
+                if reduction > 0 {
+                    merged_beneficiaries.set(
+                        i,
+                        Beneficiary {
+                            address: beneficiary.address.clone(),
+                            allocation: Allocation::Percentage(bp - reduction),
+                        },
+                    );
+                    excess -= reduction;
+                }
+            }
+        }
+        // An unrepresentable promised-minimum policy must be rejected rather
+        // than persisted with an invalid total.
+        if excess > 0 {
+            panic_with_error!(env, WillError::InvalidPercentages);
         }
     }
 
