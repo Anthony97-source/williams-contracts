@@ -68,6 +68,10 @@ mod profile;
 #[cfg(test)]
 mod fuzz_test;
 
+/// Issue #186: effective grace deadline for queries and guardian cancellation.
+#[cfg(test)]
+mod issue_186_effective_deadline_test;
+
 /// Unit tests for the mixed percentage/fixed-amount `Allocation` model.
 #[cfg(test)]
 mod allocation_test;
@@ -3196,8 +3200,9 @@ impl WillContract {
                 // future entry point ever saves a `Triggered` will without it,
                 // in which case it deliberately degrades to `last_checkin`
                 // (understating the elapsed grace period) rather than panicking.
-                let trigger_time = will.trigger_time.unwrap_or(will.last_checkin);
-                let deadline = checked_deadline_as_i64(&env, trigger_time, will.grace_period_days);
+                // Issue #186: include any granted grace extension so the
+                // query agrees with release/recovery at the effective boundary.
+                let deadline = timestamp_as_i64(&env, grace_deadline(&env, &will));
                 Some(deadline - now)
             }
             WillStatus::PendingConfirmation => {
@@ -3855,12 +3860,10 @@ impl WillContract {
         // cancel quorum must not be able to rewind the will to `Active` and
         // restart the check-in clock (#373) -- same rule `emergency_checkin`
         // enforces, so a guardian quorum and the owner are held to one deadline.
-        let trigger_time = will.trigger_time.unwrap_or(0);
-        let grace_deadline = checked_add_timestamp(
-            &env,
-            trigger_time,
-            checked_days_to_seconds(&env, will.grace_period_days),
-        );
+        // Issue #186: the owner's emergency recovery and the release path use
+        // the effective deadline including granted extensions; guardian
+        // cancellation must not expire earlier than those paths.
+        let grace_deadline = grace_deadline(&env, &will);
         if now > grace_deadline {
             panic_with_error!(&env, WillError::GracePeriodExpired);
         }
@@ -6429,7 +6432,13 @@ fn checked_add_timestamp(env: &Env, base: u64, offset: u64) -> u64 {
 fn checked_deadline_as_i64(env: &Env, base: u64, days: u64) -> i64 {
     let offset = checked_days_to_seconds(env, days);
     let deadline_u64 = checked_add_timestamp(env, base, offset);
-    deadline_u64
+    timestamp_as_i64(env, deadline_u64)
+}
+
+/// Converts an already-computed deadline to `i64` for query responses,
+/// surfacing overflow instead of clamping to a misleading value.
+fn timestamp_as_i64(env: &Env, timestamp: u64) -> i64 {
+    timestamp
         .try_into()
         .unwrap_or_else(|_| panic_with_error!(env, WillError::ArithmeticOverflow))
 }
@@ -6448,8 +6457,11 @@ fn grace_deadline(env: &Env, will: &Will) -> u64 {
         let period_seconds = checked_days_to_seconds(env, will.checkin_period_days);
         checked_add_timestamp(env, will.last_checkin, period_seconds)
     });
-    let grace_seconds =
-        checked_days_to_seconds(env, will.grace_period_days + will.grace_extension_days);
+    let effective_days = will
+        .grace_period_days
+        .checked_add(will.grace_extension_days)
+        .unwrap_or_else(|| panic_with_error!(env, WillError::ArithmeticOverflow));
+    let grace_seconds = checked_days_to_seconds(env, effective_days);
     checked_add_timestamp(env, start, grace_seconds)
 }
 
