@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Pinned workflow validator. Bump deliberately after verifying the release.
+  ACTIONLINT_VERSION: "1.7.7"
 
 jobs:
   test:
@@ -63,3 +65,32 @@ jobs:
             echo "WASM exceeds 64KB limit"
             exit 1
           fi
+
+  workflow-lint:
+    name: Workflow Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pinned actionlint
+        # Download the pinned release binary directly so the check is
+        # reproducible and does not depend on a floating action tag.
+        run: |
+          set -euo pipefail
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64) ACTIONLINT_ARCH=amd64 ;;
+            aarch64|arm64) ACTIONLINT_ARCH=arm64 ;;
+            *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+          esac
+          URL="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${ACTIONLINT_ARCH}.tar.gz"
+          curl -fsSL "$URL" -o /tmp/actionlint.tar.gz
+          tar -xzf /tmp/actionlint.tar.gz -C /tmp actionlint
+          install -m 0755 /tmp/actionlint "$RUNNER_TEMP/actionlint"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Validate workflows
+        # Same entrypoint used locally: enumerates .github/workflows/*.yml
+        # deterministically and fails on invalid expression contexts, unknown
+        # workflow keys and bad action inputs. Runs offline (no GitHub API).
+        run: .github/scripts/check-workflows.sh
