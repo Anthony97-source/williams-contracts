@@ -371,4 +371,15 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
+    /// `set_delegate` was called with the owner itself or the contract's own
+    /// address as the delegate (#31). Self-delegation and contract-self
+    /// delegation are meaningless and would let the check-in_reset authority
+    /// point at an address that cannot act independently.
+    ///
+    /// #184 — published metadata historically assigned code 58 to this
+    /// variant, but 58 is the established `UnclaimedHashedBeneficiary` code
+    /// used by archival clients. The meaning of 58 is deliberately preserved;
+    /// this restored variant takes the next free code, 59, so delegate and
+    /// archival errors stay distinguishable.
+    InvalidDelegate = 59,
 }

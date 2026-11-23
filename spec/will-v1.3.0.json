@@ -798,6 +798,10 @@
     },
     {
       "code": 58,
+      "name": "UnclaimedHashedBeneficiary"
+    },
+    {
+      "code": 59,
       "name": "InvalidDelegate"
     }
   ]
