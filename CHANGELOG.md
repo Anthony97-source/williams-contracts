@@ -61,6 +61,13 @@ gets its own [contract spec artifact](./spec) once exported.
   documented `= 54` collided with `ConfirmationWindowNotExpired`).
 
 ### Fixed
+- **Trigger re-cooldown field integration (#174).** Restored the
+  `trigger_cooldown_until` field on `Will` and the `TRIGGER_COOLDOWN_SECONDS`
+  constant (one day), so `trigger_will` and `emergency_checkin` compile and
+  the re-trigger cooldown is distinct from the 90-day check-in deadline.
+  Creation, clone, split and legacy-migration paths default the field to `0`;
+  the v1.3.0 spec field list and the issue #104 regression test were updated
+  to document both deadlines.
 - **Merged-will guardian threshold (#17).** `merge_wills` no longer keeps the
   surviving will's `guardian_threshold` verbatim: the merged will adopts the
   stricter (larger) of the two source thresholds and re-validates it against

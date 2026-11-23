@@ -144,6 +144,9 @@ pub mod legacy {
                 checkin_period_days: self.checkin_period_days,
                 grace_period_days: self.grace_period_days,
                 last_checkin: self.last_checkin,
+                // Legacy records predate the re-trigger cooldown; 0 keeps
+                // them immediately triggerable (#174).
+                trigger_cooldown_until: 0,
                 trigger_time: self.trigger_time,
                 confirmation_deadline: self.confirmation_deadline,
                 status: self.status,

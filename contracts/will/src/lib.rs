@@ -641,6 +641,12 @@ pub const MIN_CONFIRMATION_DELAY: u64 = 300;
 /// estate in `Triggered` state.
 pub const MAX_GRACE_EXTENSION_DAYS: u64 = 30;
 
+/// Minimum active window granted to the owner after an `emergency_checkin`
+/// (#104). Keepers cannot re-trigger the will until this many seconds have
+/// elapsed, so a single missed check-in cannot become a permanent trigger
+/// loop. Same seconds unit as ledger timestamps.
+pub const TRIGGER_COOLDOWN_SECONDS: u64 = SECONDS_PER_DAY;
+
 /// Maximum keeper bounty in basis points (100 bps = 1%).
 const MAX_KEEPER_BOUNTY_BPS: u32 = 100;
 /// Maximum number of ids that can be passed to `get_wills` in a single call.
@@ -990,6 +996,7 @@ impl WillContract {
             checkin_period_days,
             grace_period_days,
             last_checkin: now,
+            trigger_cooldown_until: 0,
             trigger_time: None,
             confirmation_deadline,
             status,
@@ -1721,7 +1728,8 @@ impl WillContract {
         will.status = WillStatus::Active;
         will.trigger_time = None;
         will.last_checkin = now;
-        will.trigger_cooldown_until = now + TRIGGER_COOLDOWN_SECONDS;
+        will.trigger_cooldown_until =
+            checked_add_timestamp(&env, now, TRIGGER_COOLDOWN_SECONDS);
         will.guardian_vote_weight = 0;
         will.guardian_votes = 0;
         will.guardian_cancel_vote_weight = 0;
@@ -4314,6 +4322,7 @@ impl WillContract {
             checkin_period_days: source.checkin_period_days,
             grace_period_days: source.grace_period_days,
             last_checkin: now,
+            trigger_cooldown_until: 0,
             trigger_time: None,
             confirmation_deadline: None,
             status: WillStatus::Active,
@@ -4529,6 +4538,7 @@ impl WillContract {
                 checkin_period_days,
                 grace_period_days,
                 last_checkin: now,
+                trigger_cooldown_until: 0,
                 trigger_time: None,
                 confirmation_deadline: None,
                 status: WillStatus::Active,
@@ -5454,6 +5464,7 @@ impl WillContract {
             checkin_period_days: source.checkin_period_days,
             grace_period_days: source.grace_period_days,
             last_checkin: now,
+            trigger_cooldown_until: 0,
             trigger_time: None,
             confirmation_deadline: None,
             status: WillStatus::Active,

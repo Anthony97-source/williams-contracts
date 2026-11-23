@@ -334,6 +334,12 @@ pub struct Will {
     pub grace_period_days: u64,
     /// Unix timestamp (seconds) of the owner's last check-in.
     pub last_checkin: u64,
+    /// Unix timestamp (seconds) until which re-triggering is blocked after an
+    /// `emergency_checkin` (#104). `0` for newly created, cloned, split and
+    /// legacy-migrated wills, which have no cooldown pending yet. This is the
+    /// cooldown deadline, distinct from `last_checkin + checkin_period_days`
+    /// (the missed check-in deadline used to start the grace period).
+    pub trigger_cooldown_until: u64,
     /// Unix timestamp (seconds) at which the grace period started, if the
     /// will is triggered. This is the missed check-in deadline
     /// (`last_checkin + checkin_period_days`), not the time `trigger_will`

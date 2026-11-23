@@ -108,7 +108,18 @@ fn cooldown_expires_after_24_hours() {
     let will_id = create_will(&env, &client, &owner, &token_address, &heir);
 
     trigger_will(&env, &client, will_id);
+    let checkin_at = env.ledger().timestamp();
     client.emergency_checkin(&will_id, &owner);
+
+    // Issue #174: the re-trigger cooldown and the missed check-in deadline are
+    // separate timestamps. The will has a 90-day check-in period, but the
+    // cooldown after emergency_checkin is exactly one day.
+    let will = client.get_will(&will_id);
+    assert_eq!(will.trigger_cooldown_until, checkin_at + DAY);
+    assert_eq!(will.last_checkin, checkin_at);
+    let checkin_deadline = will.last_checkin + will.checkin_period_days * DAY;
+    assert_eq!(checkin_deadline, checkin_at + 90 * DAY);
+    assert!(will.trigger_cooldown_until < checkin_deadline);
 
     // Advance exactly 24 hours (the cooldown). `trigger_will` should still be
     // blocked at the boundary since `now < cooldown_until`.
