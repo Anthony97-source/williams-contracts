@@ -335,6 +335,10 @@ pub fn beneficiary_renounced(
 /// [`guardians_updated`] so that off-chain consumers subscribed to the dedicated
 /// `"guardup"` topic receive the notification consistently, regardless of which
 /// entry point (`update_guardians` or `update_will_settings`) made the change.
+///
+/// This event is **only** emitted when at least one field actually changes: an
+/// `update_will_settings` call whose optional parameters are all `None` is a
+/// no-op that neither rewrites the will nor publishes this event (#282).
 pub fn will_settings_updated(
     env: &Env,
     will_id: u64,

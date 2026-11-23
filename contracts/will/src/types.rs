@@ -283,8 +283,15 @@ pub struct Will {
     pub balances: Map<Address, i128>,
     /// The token contract (e.g. a USDC Stellar Asset Contract) held by the will.
     pub token: Address,
-    /// Whether the held asset is native XLM (as opposed to a token contract).
-    /// When `true`, transfers use `env.transfer()` instead of the token client.
+    /// Legacy/reserved compatibility field, retained only for stored-layout
+    /// and wire compatibility. It is **not** an active transfer-mode switch:
+    /// no production code reads it to choose a transfer primitive, and every
+    /// creation path stores `false`.
+    ///
+    /// Native XLM is represented by its Stellar Asset Contract address and is
+    /// transferred through `token::Client` (SEP-41) exactly like any other
+    /// token — there is no native-asset special case. Do not remove this field
+    /// or change its serialization/layout.
     pub is_native: bool,
     /// The amount of `token` currently locked in the will, in the token's base units.
     /// A legacy mirror of `balances[token]` kept for backward compatibility;
