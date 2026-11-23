@@ -39,19 +39,47 @@ KEEP_CONTAINER="${KEEP_CONTAINER:-false}"
 CONTAINER_NAME="williams-sandbox-$$"
 RPC_URL="http://localhost:${SANDBOX_PORT}/soroban/rpc"
 NETWORK_PASSPHRASE="Standalone Network ; February 2017"
-DEPLOY_IDENTITY="sandbox-deployer"
+# Unique aliases so parallel runs never collide with each other or with
+# preexisting user-defined networks/identities.
+NETWORK_ALIAS="sandbox-$$"
+DEPLOY_IDENTITY="sandbox-deployer-$$"
+
+# Isolated stellar-cli configuration scope for this run.  Nothing is written
+# to the user's default config directory, so existing aliases/identities are
+# never overwritten and stale configuration cannot leak in.
+STELLAR_CONFIG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/williams-sandbox-config.XXXXXX")"
+export STELLAR_CONFIG_DIR
+
+# Resource ownership tracking: only clean up what this run actually created.
+CONTAINER_CREATED=false
+NETWORK_CREATED=false
+IDENTITY_CREATED=false
 
 log() { echo "[sandbox] $*"; }
 
 cleanup() {
-    if [[ "$KEEP_CONTAINER" != "true" ]]; then
-        log "Stopping and removing container $CONTAINER_NAME …"
-        docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-    else
-        log "KEEP_CONTAINER=true — leaving container $CONTAINER_NAME running."
+    local status=$?
+    if [[ "$IDENTITY_CREATED" == "true" ]]; then
+        log "Removing deployer identity '$DEPLOY_IDENTITY' …"
+        stellar keys rm "$DEPLOY_IDENTITY" >/dev/null 2>&1 || true
     fi
+    if [[ "$NETWORK_CREATED" == "true" ]]; then
+        log "Removing network alias '$NETWORK_ALIAS' …"
+        stellar network rm "$NETWORK_ALIAS" >/dev/null 2>&1 || true
+    fi
+    if [[ "$CONTAINER_CREATED" == "true" ]]; then
+        if [[ "$KEEP_CONTAINER" != "true" ]]; then
+            log "Stopping and removing container $CONTAINER_NAME …"
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        else
+            log "KEEP_CONTAINER=true — leaving container $CONTAINER_NAME running."
+        fi
+    fi
+    rm -rf "$STELLAR_CONFIG_DIR" >/dev/null 2>&1 || true
+    return "$status"
 }
 trap cleanup EXIT
+=======
 
 # ── Check dependencies ───────────────────────────────────────────────────────
 for cmd in docker stellar; do
@@ -72,6 +100,7 @@ docker run --detach \
     "$SANDBOX_IMAGE" \
     --standalone \
     --enable-soroban-rpc 2>&1 | tail -1
+CONTAINER_CREATED=true
 
 # Wait for the RPC to be ready (up to 60 s).
 log "Waiting for Soroban RPC to be ready …"
@@ -88,14 +117,16 @@ for i in $(seq 1 60); do
 done
 
 # ── Configure stellar-cli to talk to the sandbox ─────────────────────────────
-log "Configuring stellar-cli network alias 'sandbox' …"
-stellar network add sandbox \
+log "Configuring stellar-cli network alias '$NETWORK_ALIAS' …"
+stellar network add "$NETWORK_ALIAS" \
     --rpc-url "$RPC_URL" \
-    --network-passphrase "$NETWORK_PASSPHRASE" 2>/dev/null || true
+    --network-passphrase "$NETWORK_PASSPHRASE"
+NETWORK_CREATED=true
 
 # ── Generate and fund a deployer identity ────────────────────────────────────
 log "Generating deployer identity '$DEPLOY_IDENTITY' …"
-stellar keys generate "$DEPLOY_IDENTITY" --network sandbox --fund 2>/dev/null || true
+stellar keys generate "$DEPLOY_IDENTITY" --network "$NETWORK_ALIAS" --fund
+IDENTITY_CREATED=true
 
 # ── Build the contract ───────────────────────────────────────────────────────
 log "Building contract (wasm32v1-none release) …"
@@ -109,7 +140,7 @@ log "Deploying will.wasm to standalone sandbox …"
 CONTRACT_ID="$(stellar contract deploy \
     --wasm "$WASM_PATH" \
     --source "$DEPLOY_IDENTITY" \
-    --network sandbox)"
+    --network "$NETWORK_ALIAS")"
 
 [[ -n "$CONTRACT_ID" ]] || { echo "error: deploy returned empty contract id." >&2; exit 1; }
 log "Deployed: $CONTRACT_ID"
@@ -124,7 +155,7 @@ EXPECTED_VERSION="${EXPECTED_VERSION_RAW//_/}"
 ONCHAIN_VERSION_RAW="$(stellar contract invoke \
     --id "$CONTRACT_ID" \
     --source "$DEPLOY_IDENTITY" \
-    --network sandbox \
+    --network "$NETWORK_ALIAS" \
     -- get_contract_version)"
 ONCHAIN_VERSION="$(echo "$ONCHAIN_VERSION_RAW" | tr -d '"[:space:]')"
 

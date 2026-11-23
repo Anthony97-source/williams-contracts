@@ -35,7 +35,7 @@ jobs:
         run: cargo install --locked cargo-audit
 
       - name: Run cargo audit
-        run: cargo audit
+        run: cargo audit --config audit.toml
 
   deny:
     runs-on: ubuntu-latest
