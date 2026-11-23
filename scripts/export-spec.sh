@@ -16,6 +16,7 @@
 # --locked stellar-cli`), and jq.
 #
 # STELLAR_BIN overrides the exporter binary (used by the tests).
+# CARGO_BIN overrides the cargo binary (used by the offline stub suite).
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,8 +31,10 @@ elif [[ -n "${1:-}" ]]; then
   exit 2
 fi
 
-if command -v cargo >/dev/null 2>&1; then
-  version="$(cargo metadata --no-deps --format-version 1 \
+cargo_bin="${CARGO_BIN:-cargo}"
+
+if command -v "${cargo_bin}" >/dev/null 2>&1; then
+  version="$("${cargo_bin}" metadata --no-deps --format-version 1 \
     | jq -r '.packages[] | select(.name=="will") | .version')"
 else
   version="$(sed -nE 's/^version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' contracts/will/Cargo.toml | head -n 1)"
@@ -42,7 +45,7 @@ out_path="spec/will-v${version}.json"
 stellar_bin="${STELLAR_BIN:-stellar}"
 
 echo "Building will contract (release, wasm32v1-none)..."
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo build -p will --release --target wasm32v1-none
+SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 "${cargo_bin}" build -p will --release --target wasm32v1-none
 
 if [[ "${check_mode}" -eq 0 ]]; then
   echo "Exporting spec to ${out_path}..."

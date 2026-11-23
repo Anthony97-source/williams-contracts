@@ -8,6 +8,10 @@ name: Scripts Check
 # deployment logic an actual end-to-end smoke test rather than just a
 # syntax check.
 #
+# Issue #296: the offline-suite step runs scripts/test/run-offline-suite.sh,
+# a command-stub harness that checks exit propagation, cleanup and command
+# ordering without a network, identity, Docker daemon or deployment.
+#
 # The integration-test job that used to run integration_test.sh end-to-end
 # against a local Soroban network was removed: it depended on installing
 # stellar-cli with `--features opt`, a feature that no longer exists on the
@@ -34,12 +38,17 @@ jobs:
           bash -n scripts/export-spec.sh
           bash -n scripts/check_resource_costs.sh
           bash -n scripts/check-wasm-size.sh
+          bash -n scripts/test/offline-harness.sh
+          bash -n scripts/test/run-offline-suite.sh
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: Run shellcheck
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh scripts/test/*.sh
+
+      - name: Run offline command-stub suite
+        run: scripts/test/run-offline-suite.sh
 
   # Issue #78: execute deploy-testnet.sh logic against a local Stellar
   # standalone container so the deployment script is actually run, not merely
