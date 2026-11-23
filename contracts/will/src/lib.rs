@@ -2226,6 +2226,15 @@ impl WillContract {
             WillError::WillNotReleased,
         );
 
+        // Issue #178: `reveal_and_claim` only accepts `Released`. Moving to
+        // `Settled` while a hashed slot is unclaimed would permanently block
+        // the claim and would also bypass the archival guard, which only
+        // applies to `Released` wills. Require all reserved shares to be
+        // claimed before closing; fully discharged wills still close.
+        if unclaimed_hashed_bps(&will.hashed_beneficiaries) > 0 {
+            panic_with_error!(&env, WillError::UnclaimedHashedBeneficiary);
+        }
+
         storage::transition_owner_status_index(
             &env,
             &will.owner,
@@ -5143,10 +5152,10 @@ impl WillContract {
     /// - [`WillError::WillNotSettled`] if the will is not `Released`,
     ///   `Cancelled` or `Settled`.
     /// - [`WillError::UnclaimedHashedBeneficiary`] if the will is `Released`
-    ///   and still contains hashed beneficiaries whose shares have not been
-    ///   claimed via `reveal_and_claim`. Archiving would delete the persistent
-    ///   will entry that `reveal_and_claim` depends on, permanently trapping
-    ///   those reserved funds (#1).
+    ///   or `Settled` and still contains hashed beneficiaries whose shares
+    ///   have not been claimed via `reveal_and_claim`. Archiving would delete
+    ///   the persistent will entry that `reveal_and_claim` depends on,
+    ///   permanently trapping those reserved funds (#1, #178).
     pub fn archive_will(env: Env, will_id: u64) {
         let will = load_will(&env, will_id);
         // `Settled` is terminal too: `close_will` moves a `Released` will to
@@ -5164,7 +5173,7 @@ impl WillContract {
         // on a Released will. `reveal_and_claim` loads the will by id to verify
         // the commitment; if archival removed that entry first, those funds would
         // be trapped in the contract with no retrieval path (#1).
-        if will.status == WillStatus::Released
+        if (will.status == WillStatus::Released || will.status == WillStatus::Settled)
             && unclaimed_hashed_bps(&will.hashed_beneficiaries) > 0
         {
             panic_with_error!(&env, WillError::UnclaimedHashedBeneficiary);
