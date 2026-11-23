@@ -21,6 +21,20 @@ on:
     branches: [main]
 
 jobs:
+  issue-template-labels:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate issue-template labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label list --repo "$GITHUB_REPOSITORY" --limit 1000 --json name \
+            | ruby scripts/check-issue-template-labels.rb
+
   lint:
     runs-on: ubuntu-latest
     steps:

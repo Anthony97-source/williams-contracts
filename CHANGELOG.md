@@ -10,6 +10,9 @@ gets its own [contract spec artifact](./spec) once exported.
 
 ## [Unreleased]
 
+- Added `TooManyGuardians` (59) and `InvalidCreationBatchSize` (60).
+  Existing numeric error codes retain their meanings (#281).
+
 ### Security
 - `release_inheritance` re-reads the will from storage and re-validates that
   it is still `Triggered` (with a recorded `trigger_time`) immediately before

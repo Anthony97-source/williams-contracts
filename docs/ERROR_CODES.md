@@ -22,7 +22,7 @@ available discriminant; existing values are never changed.
 | 9 | `NotGuardian` | The caller is not a designated guardian of this will. |
 | 10 | `CheckinNotDue` | `trigger_will` was called before the check-in deadline passed. |
 | 11 | `ZeroAmount` | An amount of zero (or less) was supplied where a positive amount is required. |
-| 12 | `TooManyBeneficiaries` | A list-length cap was exceeded (beneficiaries, guardians, or batch spec list). |
+| 12 | `TooManyBeneficiaries` | The beneficiary list violates the applicable count bounds. Earlier deployments also used this code for guardian and creation-batch bounds. |
 | 13 | `WillNotSettled` | The requested action requires the will to be `Released`, `Cancelled` or `Settled`. |
 | 14 | `WillNotBothActive` | Cannot merge: one or both wills are not in `Active` status. |
 | 15 | `SameWillId` | Cannot merge: the same will id was provided for both wills. |
@@ -68,6 +68,8 @@ available discriminant; existing values are never changed.
 | 56 | `InvalidBountyToken` | `set_keeper_bounty_token` named a token the will does not currently hold. |
 | 57 | `NotAuthorized` | `redirect_failed_payout` was called by an address that is neither the recorded failed-payout recipient nor the will's owner. |
 | 58 | `UnclaimedHashedBeneficiary` | `archive_will` was called on a `Released` will that still has unclaimed hashed beneficiary shares. Archiving would destroy the will entry that `reveal_and_claim` needs to verify the commitment, permanently trapping those reserved funds. |
+| 59 | `TooManyGuardians` | The guardian list contains more than `MAX_GUARDIANS` entries. |
+| 60 | `InvalidCreationBatchSize` | The creation batch is empty or contains more than `BATCH_MAX` will specs. |
 
 ## Notes
 
