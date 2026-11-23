@@ -13,7 +13,15 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
 
+# Default budget if not supplied
 MAX_WASM_SIZE_BYTES="${MAX_WASM_SIZE_BYTES:-250000}"
+
+# Validate that the budget is a positive integer before proceeding
+if ! [[ "$MAX_WASM_SIZE_BYTES" =~ ^[0-9]+$ ]] || [[ "$MAX_WASM_SIZE_BYTES" -le 0 ]]; then
+  echo "ERROR: MAX_WASM_SIZE_BYTES must be a positive integer (got '${MAX_WASM_SIZE_BYTES}')." >&2
+  exit 1
+fi
+
 wasm_path="target/wasm32v1-none/release/will.wasm"
 
 echo "Building will contract (release, wasm32v1-none)..."
