@@ -68,6 +68,10 @@ mod profile;
 #[cfg(test)]
 mod fuzz_test;
 
+/// Issue #208: checked fixed-allocation totals.
+#[cfg(test)]
+mod issue_208_test;
+
 /// Unit tests for the mixed percentage/fixed-amount `Allocation` model.
 #[cfg(test)]
 mod allocation_test;
@@ -6027,7 +6031,13 @@ fn assert_valid_allocations(
                 if amount <= 0 {
                     panic_with_error!(env, WillError::InvalidPercentages);
                 }
-                fixed_total = fixed_total.saturating_add(amount);
+                // Issue #208: a saturated sum would turn an overcommitted
+                // fixed total into i128::MAX, which can pass validation when
+                // the primary balance is also i128::MAX. Report the overflow
+                // with a typed error instead.
+                fixed_total = fixed_total
+                    .checked_add(amount)
+                    .unwrap_or_else(|| panic_with_error!(env, WillError::ArithmeticOverflow));
             }
         }
     }
@@ -7075,10 +7085,19 @@ fn reset_all_guardians_consent(env: &Env, guardians: &Vec<Guardian>) -> Vec<Guar
 /// cannot express); and two percentages collapse to `existing`, whose basis
 /// points are only advisory here — `merge_beneficiaries` recomputes them from
 /// the merged shares anyway.
-fn merge_allocation(existing: &Allocation, incoming: &Allocation) -> Allocation {
+fn merge_allocation(
+    env: &Env,
+    existing: &Allocation,
+    incoming: &Allocation,
+) -> Allocation {
     match (existing, incoming) {
         (Allocation::FixedAmount(amt_a), Allocation::FixedAmount(amt_b)) => {
-            Allocation::FixedAmount(amt_a.saturating_add(*amt_b))
+            // Issue #208: never let an overcommitted pair of fixed amounts
+            // wrap to a saturated value that later passes validation.
+            let total = amt_a
+                .checked_add(*amt_b)
+                .unwrap_or_else(|| panic_with_error!(env, WillError::ArithmeticOverflow));
+            Allocation::FixedAmount(total)
         }
         (Allocation::FixedAmount(amt), _) => Allocation::FixedAmount(*amt),
         (_, Allocation::FixedAmount(amt)) => Allocation::FixedAmount(*amt),
@@ -7130,7 +7149,7 @@ fn merge_beneficiaries(env: &Env, will_a: &Will, will_b: &Will) -> Vec<Beneficia
                         i,
                         (
                             addr,
-                            merge_allocation(&existing_alloc, &beneficiary.allocation),
+                            merge_allocation(env, &existing_alloc, &beneficiary.allocation),
                         ),
                     );
                     found = true;
