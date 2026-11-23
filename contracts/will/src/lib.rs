@@ -2031,12 +2031,16 @@ impl WillContract {
                 &request.token,
                 &request.recipient,
             );
+            // The exact `(will_id, token, recipient)` tuple has just been
+            // removed from storage, so this retry fully resolves it — same
+            // semantics as the single `retry_failed_payout` path (issue #175).
             events::payout_retried(
                 &env,
                 request.will_id,
                 &request.token,
                 &request.recipient,
                 amount,
+                true,
             );
             succeeded.push_back(request.clone());
             idx += 1;
