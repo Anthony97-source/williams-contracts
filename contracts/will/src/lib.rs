@@ -68,6 +68,10 @@ mod profile;
 #[cfg(test)]
 mod fuzz_test;
 
+/// Issue #177: schema-compatible decoding for every will-entry read.
+#[cfg(test)]
+mod issue_177_test;
+
 /// Unit tests for the mixed percentage/fixed-amount `Allocation` model.
 #[cfg(test)]
 mod allocation_test;
