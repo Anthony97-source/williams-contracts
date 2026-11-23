@@ -4809,6 +4809,34 @@ impl WillContract {
             panic_with_error!(&env, WillError::MergeWouldExceedLimits);
         }
 
+        // Issue #180: enforce MAX_TOKENS on the *distinct union* of both
+        // balances before any mutation. Two individually valid 10-token wills
+        // can share a primary token yet hold 19 distinct tokens together;
+        // the merged survivor would then be rejected by release's
+        // `assert_release_preconditions` and its funds could never be paid
+        // out. Counting distinct addresses (not source lengths) also allows
+        // overlapping secondary sets to merge when the union still fits.
+        let mut merged_token_addresses: Vec<Address> = Vec::new(&env);
+        for (token_addr, _) in will_a.balances.iter() {
+            if !merged_token_addresses.contains(&token_addr) {
+                merged_token_addresses.push_back(token_addr);
+            }
+        }
+        for (token_addr, _) in will_b.balances.iter() {
+            if !merged_token_addresses.contains(&token_addr) {
+                merged_token_addresses.push_back(token_addr);
+            }
+        }
+        if merged_token_addresses.len() > MAX_TOKENS {
+            log!(
+                &env,
+                "merged will would hold {} distinct tokens; MAX_TOKENS is {}",
+                merged_token_addresses.len(),
+                MAX_TOKENS
+            );
+            panic_with_error!(&env, WillError::MergeWouldExceedLimits);
+        }
+
         // Merge guardians, matching on **address** only. Comparing whole
         // `Guardian` structs treated the same address as two entries whenever
         // the two wills recorded a different weight or consent for it, so a
