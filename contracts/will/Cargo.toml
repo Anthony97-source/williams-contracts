@@ -8,6 +8,11 @@ repository = "https://github.com/willi-d7/williams-contracts"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+# Doc tests are disabled because this crate targets a `no_std` Soroban contract
+# context: rustdoc examples cannot link the Soroban host without a test host
+# setup, so runnable examples are maintained as tested fixtures instead (see
+# `src/create_will_doc_example_test.rs`). Intra-doc link validation is still
+# enforced in CI via `cargo doc` with `-D rustdoc::broken_intra_doc_links`.
 doctest = false
 
 [dependencies]

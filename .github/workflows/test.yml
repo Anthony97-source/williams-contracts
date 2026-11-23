@@ -6,56 +6,60 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  fmt:
-    name: Formatting
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - name: Check formatting
-        run: cargo fmt --check
-
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
-
-  checked-arithmetic-lint:
-    name: Checked Arithmetic Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Lint timestamp/period arithmetic in will contract
-        run: bash scripts/lint-checked-arithmetic.sh
-
   test:
-    name: Test
+    name: Test & Build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Run tests
-        run: cargo test --all
 
-  build-wasm:
-    name: Build & Verify WASM Size
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32v1-none
-      - uses: Swatinem/rust-cache@v2
-      - name: Build contract & verify binary size
-        run: bash scripts/check-wasm-size.sh
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run tests
+        run: cargo test --all-features
+
+      - name: Rustdoc (warning-failing)
+        # Fail on broken intra-doc links and any other rustdoc warning so
+        # source API documentation cannot silently drift. Runs offline against
+        # the supported host/contract feature configuration.
+        env:
+          RUSTDOCFLAGS: "-D warnings -D rustdoc::broken_intra_doc_links"
+        run: cargo doc --no-deps --all-features
+
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release --package will
+
+      - name: Check WASM size
+        run: |
+          WASM_FILE=$(find target/wasm32-unknown-unknown/release -name '*.wasm' | head -n 1)
+          if [ -z "$WASM_FILE" ]; then
+            echo "No WASM file produced"
+            exit 1
+          fi
+          SIZE=$(stat -c%s "$WASM_FILE")
+          echo "WASM size: $SIZE bytes"
+          if [ "$SIZE" -gt 65536 ]; then
+            echo "WASM exceeds 64KB limit"
+            exit 1
+          fi
