@@ -23,11 +23,12 @@ Only the latest code on the `main` branch and currently active deployments are a
 If you discover a security vulnerability, please report it privately using one of the following methods:
 
 1. **GitHub Private Vulnerability Reporting (Preferred)**:
-   - Navigate to the [Security Advisories](https://github.com/Williams/williams-contracts/security/advisories) tab of the repository.
+   - Navigate to the [Security Advisories](https://github.com/willi-d7/williams-contracts/security/advisories) tab of the canonical repository (`willi-d7/williams-contracts`, matching the `repository` field in [`contracts/will/Cargo.toml`](./contracts/will/Cargo.toml)).
    - Click **"Report a vulnerability"** to submit a confidential report directly to the maintainers.
+   - **Maintainer note**: Private Vulnerability Reporting must be verified as enabled for the canonical repository before this channel is advertised. Verify with read-only checks of the repository's security settings and links only; do not submit a test disclosure.
 
-2. **Email Disclosure**:
-   - If Private Vulnerability Reporting is unavailable, send your findings to `security@williams.org`.
+2. **Email Disclosure (Reviewed Fallback)**:
+   - If Private Vulnerability Reporting is unavailable for the canonical repository, send your findings to `security@williams.org`. This is the reviewed fallback channel.
    - Include a detailed description of the vulnerability, steps or proof-of-concept (PoC) code to reproduce it, and the potential impact on user funds or contract execution.
 
 ### Expected Response SLAs
