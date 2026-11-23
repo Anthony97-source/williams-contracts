@@ -105,7 +105,8 @@ decoding unless you also ship a migration path. The machinery is in
 |---|---|
 | 0 | Wills written before `schema_version` was populated. |
 | 1 | Layout with `keeper_bounty_bps` and `delegate`; no bounty-token selection. |
-| 2 | Current layout. Added `Will::keeper_bounty_token` (#109). |
+| 2 | Added `Will::keeper_bounty_token` (#109) and regrouped fields (#117). |
+| 3 | Current layout. Added `Will::grace_extension_days` (#102), decoded from frozen prior-v2 entries with a zero default (#176). |
 
 **To introduce version N+1** (for example, adding a field to `Will`):
 

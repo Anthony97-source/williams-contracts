@@ -61,6 +61,10 @@ gets its own [contract spec artifact](./spec) once exported.
   documented `= 54` collided with `ConfirmationWindowNotExpired`).
 
 ### Fixed
+- **Prior-v2 will layout (#176).** Added a frozen `legacy::WillV2` type and a
+  v2 → v3 schema migration so wills written with `keeper_bounty_token` but
+  without `grace_extension_days` still decode; active and archived records are
+  covered by tests and `CURRENT_SCHEMA_VERSION` is now 3.
 - **Merged-will guardian threshold (#17).** `merge_wills` no longer keeps the
   surviving will's `guardian_threshold` verbatim: the merged will adopts the
   stricter (larger) of the two source thresholds and re-validates it against
