@@ -4297,6 +4297,18 @@ impl WillContract {
         let will_id = storage::next_will_id(&env);
         let now = env.ledger().timestamp();
         let token_count = balances.len();
+        // Issue #210: the clone's balances come from the `tokens` argument,
+        // not verbatim from the source, so a targeted bounty token may no
+        // longer be held. Keep the selection only when the clone actually
+        // holds that token; otherwise clear it so distribute uses the
+        // documented proportional fallback.
+        let clone_bounty_token = source.keeper_bounty_token.as_ref().and_then(|target| {
+            if balances.contains_key(target.clone()) {
+                Some(target.clone())
+            } else {
+                None
+            }
+        });
 
         for beneficiary in source.beneficiaries.iter() {
             storage::index_by_beneficiary(&env, &beneficiary.address, will_id);
@@ -4326,9 +4338,7 @@ impl WillContract {
             guardian_list_updated_at: now,
             schema_version: CURRENT_SCHEMA_VERSION,
             keeper_bounty_bps: source.keeper_bounty_bps,
-            // The clone copies the source's balances verbatim, so a targeted
-            // bounty token stays held by the clone (#109).
-            keeper_bounty_token: source.keeper_bounty_token.clone(),
+            keeper_bounty_token: clone_bounty_token,
             delegate: None,
             grace_extension_days: 0,
         };
