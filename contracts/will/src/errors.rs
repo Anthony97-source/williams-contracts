@@ -371,10 +371,14 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
-    /// Raised when a will's schema version is newer than this build supports,
-    /// e.g. after a contract rollback (#129).
-    FutureSchemaVersion = 59,
-    /// Raised when release is attempted during a guardian emergency freeze,
-    /// or a second freeze is requested (#128).
-    CountdownFrozen = 60,
+    /// `retry_owner_refund` was called for a `(will_id, token)` pair with no
+    /// recorded deferred owner refund — either the token was never deferred
+    /// (it transferred successfully during cancellation), it was already
+    /// recovered, or the will is not in a cancelled/refunded state (#213).
+    ///
+    /// Owner refunds now use the same deferred-delivery model as beneficiary
+    /// payouts: a token that refuses transfer during `cancel_will`,
+    /// `refund_unconfirmed_will` or `guardian_cancel_pending_will` is recorded
+    /// as a recoverable liability instead of rolling back the whole refund.
+    NoDeferredOwnerRefund = 59,
 }
