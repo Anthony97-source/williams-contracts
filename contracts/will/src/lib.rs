@@ -1702,6 +1702,7 @@ impl WillContract {
         );
         will.status = WillStatus::Active;
         will.trigger_time = None;
+        will.grace_extension_days = 0;
         will.last_checkin = now;
         will.trigger_cooldown_until = now + TRIGGER_COOLDOWN_SECONDS;
         will.guardian_vote_weight = 0;
@@ -1890,6 +1891,9 @@ impl WillContract {
         let now = env.ledger().timestamp();
         if now <= grace_deadline(&env, &will) {
             panic_with_error!(&env, WillError::GracePeriodNotExpired);
+        }
+        if now < freeze_until(&env, will_id) {
+            panic_with_error!(&env, WillError::CountdownFrozen);
         }
 
         record_transition(
@@ -3983,6 +3987,7 @@ impl WillContract {
             );
             will.status = WillStatus::Active;
             will.trigger_time = None;
+            will.grace_extension_days = 0;
             will.last_checkin = now;
             will.guardian_vote_weight = 0;
             will.guardian_votes = 0;
@@ -6598,6 +6603,16 @@ fn checked_deadline_as_i64(env: &Env, base: u64, days: u64) -> i64 {
 /// goes through this helper so they can never disagree. The fallback for a
 /// missing `trigger_time` uses the same anchor rather than `0`, which would
 /// otherwise make the grace period appear long expired.
+/// Duration of a guardian emergency countdown freeze (#128): 7 days.
+pub const GUARDIAN_FREEZE_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+fn freeze_until(env: &Env, will_id: u64) -> u64 {
+    env.storage()
+        .persistent()
+        .get(&(symbol_short!("frz_until"), will_id))
+        .unwrap_or(0)
+}
+
 fn grace_deadline(env: &Env, will: &Will) -> u64 {
     let start = will.trigger_time.unwrap_or_else(|| {
         let period_seconds = checked_days_to_seconds(env, will.checkin_period_days);
