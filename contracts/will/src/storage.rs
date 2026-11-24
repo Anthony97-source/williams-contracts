@@ -90,6 +90,8 @@ pub(crate) enum DataKey {
     ProtocolStats,
     /// Active will count counter.
     ActiveWillCount,
+    /// Set when a repair has rebuilt all token totals from the live wills.
+    LockedTotalsRebuilt,
     /// List of distinct tokens currently with active locked balances in the protocol.
     ProtocolTokens,
     /// Discrete total locked amount for a single token across the protocol.
@@ -181,6 +183,8 @@ pub fn get_total_locked(env: &Env, token: &Address) -> i128 {
     let key = DataKey::TotalLocked(token.clone());
     if let Some(val) = env.storage().persistent().get(&key) {
         val
+    } else if env.storage().instance().has(&DataKey::LockedTotalsRebuilt) {
+        0
     } else if let Some(val) = env.storage().instance().get(&key) {
         val
     } else if let Some(stats) = env
@@ -276,7 +280,7 @@ pub fn get_protocol_stats(env: &Env) -> ProtocolStats {
     }
 }
 
-/// Persists protocol statistics into discrete storage entries and instance storage.
+/// Replaces all protocol statistics with an authoritative rebuild.
 pub fn save_protocol_stats(env: &Env, stats: &ProtocolStats) {
     set_active_will_count(env, stats.active_will_count);
     let old_tokens = get_protocol_tokens(env);
@@ -298,7 +302,11 @@ pub fn save_protocol_stats(env: &Env, stats: &ProtocolStats) {
     env.storage()
         .instance()
         .set(&DataKey::ProtocolTokens, &tokens);
-    env.storage().instance().set(&DataKey::ProtocolStats, stats);
+    env.storage().instance().remove(&DataKey::ProtocolStats);
+    // Old instance totals outside the token index cannot be enumerated here.
+    env.storage()
+        .instance()
+        .set(&DataKey::LockedTotalsRebuilt, &true);
 }
 
 /// Increments the active-will counter by one.
@@ -345,6 +353,22 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     } else {
         env.storage().persistent().remove(&key);
         let tokens = get_protocol_tokens(env);
+        let instance = env.storage().instance();
+        if !instance.has(&DataKey::LockedTotalsRebuilt) {
+            instance.remove(&key);
+            // Preserve the remaining snapshot totals for tokens that have
+            // yet to migrate to discrete storage.
+            if let Some(mut stats) = instance.get::<_, ProtocolStats>(&DataKey::ProtocolStats) {
+                let mut remaining = Vec::new(env);
+                for entry in stats.total_locked_by_token.iter() {
+                    if entry.token != *token {
+                        remaining.push_back(entry);
+                    }
+                }
+                stats.total_locked_by_token = remaining;
+                instance.set(&DataKey::ProtocolStats, &stats);
+            }
+        }
         let mut updated = Vec::new(env);
         for t in tokens.iter() {
             if t != *token {
@@ -632,6 +656,38 @@ pub fn save_will(env: &Env, will: &Will) {
             .persistent()
             .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
     }
+}
+
+/// Extends the persistent storage TTL of a live will record without modifying
+/// its contents.
+///
+/// # Rent policy for Released wills with outstanding hashed claims
+///
+/// [`save_will`] deliberately stops renewing the TTL of terminal wills
+/// (`Released` / `Cancelled`) so fully discharged records age out and are
+/// collected by Soroban's state archival system. A `Released` will that still
+/// carries unpaid hashed reserves in `Will::balances`, however, must remain
+/// loadable until every beneficiary has claimed: `reveal_and_claim` reads the
+/// record and writes the remaining balances back, and a TTL lapse in between
+/// would force a restore of the entry before the next claim could succeed.
+///
+/// This helper is the explicit, narrowly scoped keepalive for exactly that
+/// case. It only ever extends an existing `DataKey::Will(will_id)` entry — it
+/// never creates, mutates, or re-validates the will, so entitlements are
+/// untouched — and it is a no-op returning [`WillError::WillNotFound`] when the
+/// record is absent (never created, explicitly archived, or already collected).
+/// Callers are responsible for only invoking it while real outstanding claims
+/// remain; once a record is fully discharged it must be left to expire under
+/// the normal terminal rent behaviour.
+pub fn extend_will_ttl(env: &Env, will_id: u64) -> Result<(), WillError> {
+    let key = DataKey::Will(will_id);
+    if !env.storage().persistent().has(&key) {
+        return Err(WillError::WillNotFound);
+    }
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
+    Ok(())
 }
 
 /// Loads a will by id, returning `WillError::WillNotFound` if it does not exist.
@@ -1239,6 +1295,37 @@ pub fn reset_guardian_votes(env: &Env, will: &Will) {
     }
 }
 
+/// Returns the timestamp of `guardian`'s cancel-trigger vote for `will_id`
+/// when that vote is still live at `now`, or `None` otherwise.
+///
+/// This is the read-only counterpart of [`has_guardian_cancel_voted`] and
+/// uses exactly the same liveness rule: the record must exist, must not be
+/// timestamped after `now`, and must satisfy [`vote_is_live`]. It therefore
+/// agrees with [`recount_guardian_cancel_votes`] about which votes count
+/// toward the cancel quorum, while additionally reporting *when* the vote was
+/// cast so recovery dashboards can show its remaining validity (#214).
+///
+/// Unlike the recount helpers this never mutates storage: an expired record is
+/// reported as `None` but left in place for the next recount pass to drop.
+pub fn get_guardian_cancel_vote(
+    env: &Env,
+    will_id: u64,
+    guardian: &Address,
+    now: u64,
+    expiry_days: u64,
+) -> Option<u64> {
+    let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
+    let record = env
+        .storage()
+        .persistent()
+        .get::<_, GuardianVoteRecord>(&key)?;
+    if now >= record.timestamp && vote_is_live(now, record.timestamp, expiry_days) {
+        Some(record.timestamp)
+    } else {
+        None
+    }
+}
+
 /// Returns whether `guardian` has a non-expired cancel vote in the current
 /// cycle for `will_id`.
 ///
@@ -1580,7 +1667,7 @@ pub fn get_history(env: &Env, will_id: u64) -> Vec<WillStatusTransition> {
 pub fn paginate_history(
     env: &Env,
     will_id: u64,
-    cursor: Option<u32>,
+    cursor: Option<u64>,
     limit: u32,
 ) -> Vec<WillStatusTransition> {
     let history = get_history(env, will_id);
@@ -1594,7 +1681,7 @@ pub fn paginate_history(
     // Treat the cursor as a seq value: include entries with seq > cursor.
     // `None` and `Some(0)` both start from the beginning because seq
     // counters start at 1.
-    let after_seq: u64 = cursor.map(|v| v as u64).unwrap_or(0);
+    let after_seq = cursor.unwrap_or(0);
 
     let mut count: u32 = 0;
     for entry in history.iter() {
@@ -1763,6 +1850,47 @@ pub fn get_failed_payout(
 pub fn remove_failed_payout(env: &Env, will_id: u64, token: &Address, recipient: &Address) {
     let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
     env.storage().persistent().remove(&key);
+}
+
+/// Records a deferred **owner refund** for `(will_id, token, owner)` (#213).
+///
+/// Owner-refund paths (`cancel_will`, `refund_unconfirmed_will`,
+/// `guardian_cancel_pending_will`) use the same `FailedPayout` ledger as
+/// beneficiary distributions so that one unavailable token cannot roll back
+/// the refunds of every other token: the transfer is attempted, and on
+/// failure the outstanding amount is recorded here instead of panicking.
+///
+/// The record is keyed by the will id, token and the owner as recipient, so
+/// it is exactly-once recoverable through the existing
+/// `retry_failed_payout` / [`get_failed_payout`] / [`remove_failed_payout`]
+/// machinery — a retry delivers the amount and clears the record, and a
+/// second retry finds nothing left to pay.
+///
+/// Amounts are **accumulated** rather than overwritten: if a refund for the
+/// same tuple is deferred more than once (for example a partially delivered
+/// refund followed by another failure), the recorded liability is the sum of
+/// everything still owed, never just the latest attempt.
+pub fn record_failed_owner_refund(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    owner: &Address,
+    amount: i128,
+) {
+    if amount <= 0 {
+        return;
+    }
+    let key = DataKey::FailedPayout(will_id, token.clone(), owner.clone());
+    let outstanding: i128 = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(0)
+        .saturating_add(amount);
+    env.storage().persistent().set(&key, &outstanding);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
 /// Migrates the complete owner portfolio from `old_owner` to `new_owner`.

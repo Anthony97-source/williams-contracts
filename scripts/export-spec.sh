@@ -37,9 +37,8 @@ export_spec() {
     --output "$out"
 }
 
-main() {
-  echo "Building will contract wasm..."
-  cargo build -p will --release --target wasm32v1-none
+echo "Building will contract (canonical locked release build)..."
+"${repo_root}/scripts/build-wasm.sh" will
 
   if [[ ! -f "$WASM_PATH" ]]; then
     echo "error: expected wasm artifact not found at $WASM_PATH" >&2
