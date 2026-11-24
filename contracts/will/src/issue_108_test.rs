@@ -225,3 +225,58 @@ fn batch_retry_rejects_oversized_batch() {
         .unwrap();
     assert_eq!(err, WillError::BatchTooLarge.into());
 }
+
+/// Issue #175: the batched retry emits the same six-field `payout_retried`
+/// payload as the single retry path, including `fully_resolved = true`.
+#[test]
+fn batch_retry_emits_resolution_context() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (will_id, token_id) = make_failed_payout(
+        &env, &owner, &beneficiary, 500_000, &client,
+    );
+
+    let requests = soroban_sdk::vec![
+        &env,
+        FailedPayoutRequest {
+            will_id,
+            token: token_id.clone(),
+            recipient: beneficiary.clone(),
+        }
+    ];
+    let succeeded = client.batch_retry_failed_payouts(&requests);
+    assert_eq!(succeeded.len(), 1);
+
+    let mut resolved_flags: Vec<bool> = Vec::new(&env);
+    for event in env.events().all().events().iter() {
+        if let soroban_sdk::xdr::ContractEventBody::V0(v0) = &event.body {
+            let mut topics = soroban_sdk::Vec::<soroban_sdk::Val>::new(&env);
+            for topic in v0.topics.iter() {
+                if let Ok(val) = topic.clone().try_into_val(&env) {
+                    topics.push_back(val);
+                }
+            }
+            if let Some(first) = topics.first() {
+                if let Ok(topic0) = first.try_into_val::<soroban_sdk::Symbol, _>(&env) {
+                    if topic0 == soroban_sdk::symbol_short!("payretry") {
+                        let data: soroban_sdk::Val = v0.data.clone().try_into_val(&env).unwrap();
+                        let fields: soroban_sdk::Vec<soroban_sdk::Val> =
+                            data.try_into_val(&env).unwrap();
+                        if let Some(last) = fields.last() {
+                            resolved_flags.push_back(last.try_into_val(&env).unwrap());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(resolved_flags.len(), 1);
+    assert!(resolved_flags.first().unwrap());
+}
