@@ -5,12 +5,16 @@
 //! from the event stream.
 
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    symbol_short,
+    testutils::{Address as _, Events as _, Ledger},
     token::Client as TokenClient,
-    vec, Address, Env,
+    vec,
+    xdr::ScVal,
+    Address, Env,
 };
 
 use crate::{
+    event_test_support as events,
     issue_18_test::{FailableToken, FailableTokenClient},
     storage, Allocation, Beneficiary, WillContract, WillContractClient,
 };
@@ -23,17 +27,16 @@ fn advance(env: &Env, days: u64) {
 
 /// Creates a will funded with `amount` of a failable token, triggers it, and
 /// releases so `distribute` records one failed payout for `beneficiary`.
-fn make_failed_payout<'a>(
+fn make_failed_payout(
     env: &Env,
     owner: &Address,
     beneficiary: &Address,
     amount: i128,
-    client: &WillContractClient<'a>,
+    client: &WillContractClient<'_>,
 ) -> (u64, Address) {
     let token_id = env.register(FailableToken, ());
     let failable = FailableTokenClient::new(env, &token_id);
-    failable.mint(owner, amount);
-    failable.set_fail_all(&true);
+    failable.mint(owner, &amount);
 
     let will_id = client.create_will(
         owner,
@@ -56,6 +59,7 @@ fn make_failed_payout<'a>(
     advance(env, 91);
     client.trigger_will(&will_id);
     advance(env, 8);
+    failable.set_fail_all(&true);
     client.release_inheritance(&will_id, &None);
     failable.set_fail_all(&false);
 
@@ -73,14 +77,15 @@ fn retry_failed_payout_clears_record_and_delivers_funds() {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    let (will_id, token_id) = make_failed_payout(
-        &env, &owner, &beneficiary, 500_000, &client,
-    );
+    let (will_id, token_id) = make_failed_payout(&env, &owner, &beneficiary, 500_000, &client);
 
     // Precondition: the failed payout is recorded.
     assert_eq!(
         env.as_contract(&contract_id, || storage::get_failed_payout(
-            &env, will_id, &token_id, &beneficiary
+            &env,
+            will_id,
+            &token_id,
+            &beneficiary
         )),
         Some(500_000),
         "precondition: distribute must record the failed payout"
@@ -91,7 +96,10 @@ fn retry_failed_payout_clears_record_and_delivers_funds() {
     // The failed payout is cleared from storage.
     assert_eq!(
         env.as_contract(&contract_id, || storage::get_failed_payout(
-            &env, will_id, &token_id, &beneficiary
+            &env,
+            will_id,
+            &token_id,
+            &beneficiary
         )),
         None,
         "successful retry must clear the failed-payout record"
@@ -117,32 +125,25 @@ fn retry_failed_payout_emits_event_with_resolution_context() {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    let (will_id, token_id) = make_failed_payout(
-        &env, &owner, &beneficiary, 500_000, &client,
-    );
+    let (will_id, token_id) = make_failed_payout(&env, &owner, &beneficiary, 500_000, &client);
 
     client.retry_failed_payout(&will_id, &token_id, &beneficiary);
 
-    // The `payretry` event is published in the most recent invocation.
-    let mut found_payretry = false;
-    for event in env.events().all().events().iter() {
-        if let soroban_sdk::xdr::ContractEventBody::V0(v0) = &event.body {
-            let mut topics = soroban_sdk::Vec::<soroban_sdk::Val>::new(&env);
-            for topic in v0.topics.iter() {
-                if let Ok(val) = topic.clone().try_into_val(&env) {
-                    topics.push_back(val);
-                }
-            }
-            if let Some(first) = topics.first() {
-                if let Ok(topic0) = first.try_into_val::<soroban_sdk::Symbol, _>(&env) {
-                    if topic0 == soroban_sdk::symbol_short!("payretry") {
-                        found_payretry = true;
-                    }
-                }
-            }
-        }
-    }
-    assert!(found_payretry, "expected a payretry event after successful retry");
+    let emitted = env.events().all();
+    let event = emitted
+        .events()
+        .iter()
+        .find(|event| {
+            events::topic_symbol(&env, event) == Some(symbol_short!("payretry"))
+                && events::topic_u64(event, 1) == Some(will_id)
+        })
+        .expect("retry event for this will");
+    let payload = events::data_vec(event).expect("retry event payload");
+    assert_eq!(payload.len(), 4);
+    assert_eq!(events::address_from(&payload[0], &env), Some(token_id));
+    assert_eq!(events::address_from(&payload[1], &env), Some(beneficiary));
+    assert_eq!(events::i128_from(&payload[2]), Some(500_000));
+    assert_eq!(payload[3], ScVal::Bool(true));
 }
 
 #[test]
