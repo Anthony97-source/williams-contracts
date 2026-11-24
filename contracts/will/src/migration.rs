@@ -75,7 +75,11 @@ pub const fn encode_version(major: u32, minor: u32, patch: u32) -> u32 {
 
 /// Splits a packed version back into `(major, minor, patch)`.
 pub const fn decode_version(version: u32) -> (u32, u32, u32) {
-    (version / 1_000_000, (version / 1_000) % 1_000, version % 1_000)
+    (
+        version / 1_000_000,
+        (version / 1_000) % 1_000,
+        version % 1_000,
+    )
 }
 
 /// Legacy `Will` layouts, frozen at the version their successor replaced.
@@ -216,6 +220,9 @@ pub mod legacy {
                 checkin_period_days: self.checkin_period_days,
                 grace_period_days: self.grace_period_days,
                 last_checkin: self.last_checkin,
+                // Legacy records predate the re-trigger cooldown; 0 keeps
+                // them immediately triggerable (#174).
+                trigger_cooldown_until: 0,
                 trigger_time: self.trigger_time,
                 confirmation_deadline: self.confirmation_deadline,
                 status: self.status,
@@ -262,9 +269,14 @@ pub fn decode_will(env: &Env, raw: &Val) -> Result<Will, WillError> {
 }
 
 /// Runs every migration step between `will.schema_version` and
-/// [`CURRENT_SCHEMA_VERSION`], in order. A will already at (or beyond) the
-/// current version is returned unchanged.
+/// [`CURRENT_SCHEMA_VERSION`], in order. A will already at the current version
+/// is returned unchanged. A will written by a newer build (e.g. read after a
+/// contract rollback) panics with [`WillError::FutureSchemaVersion`] rather
+/// than being silently treated as current (#129).
 pub fn upgrade(env: &Env, mut will: Will) -> Will {
+    if will.schema_version > CURRENT_SCHEMA_VERSION {
+        soroban_sdk::panic_with_error!(env, WillError::FutureSchemaVersion);
+    }
     while will.schema_version < CURRENT_SCHEMA_VERSION {
         will = match will.schema_version {
             0 => migrate_v0_to_v1(env, will),
