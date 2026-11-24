@@ -24,8 +24,8 @@ fi
 
 wasm_path="target/wasm32v1-none/release/will.wasm"
 
-echo "Building will contract (release, wasm32v1-none)..."
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo build -p will --release --target wasm32v1-none
+echo "Building will contract (release, wasm32v1-none, locked)..."
+"${repo_root}/scripts/build-wasm.sh" will
 
 if [[ ! -f "${wasm_path}" ]]; then
   echo "ERROR: ${wasm_path} does not exist after build." >&2
