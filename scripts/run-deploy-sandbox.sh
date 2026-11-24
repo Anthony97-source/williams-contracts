@@ -28,6 +28,10 @@
 #   SANDBOX_PORT    Host port to expose the RPC on. Default: 8000
 #   KEEP_CONTAINER  If set to "true", the container is not removed on exit.
 #                   Useful for debugging failed runs locally.
+#   KEEP_LOGS       If set to "true", the container's daemon logs are saved to
+#                   "sandbox-logs-<container-id>.txt" before the container is
+#                   removed.  This provides diagnostic information when a run
+#                   fails.
 
 set -euo pipefail
 
@@ -39,6 +43,7 @@ cd "$ROOT_DIR"
 SANDBOX_IMAGE="${SANDBOX_IMAGE:-stellar/quickstart:stellar-23.0.1@sha256:0000000000000000000000000000000000000000000000000000000000000000}"
 SANDBOX_PORT="${SANDBOX_PORT:-8000}"
 KEEP_CONTAINER="${KEEP_CONTAINER:-false}"
+KEEP_LOGS="${KEEP_LOGS:-false}"
 CONTAINER_NAME="williams-sandbox-$$"
 RPC_URL="http://localhost:${SANDBOX_PORT}/soroban/rpc"
 NETWORK_PASSPHRASE="Standalone Network ; February 2017"
@@ -82,7 +87,6 @@ cleanup() {
     return "$status"
 }
 trap cleanup EXIT
-=======
 
 # ── Check dependencies ───────────────────────────────────────────────────────
 for cmd in docker stellar curl; do
@@ -218,4 +222,4 @@ if [[ "$ONCHAIN_VERSION" != "$EXPECTED_VERSION" ]]; then
 fi
 log "OK: on-chain version $ONCHAIN_VERSION matches source CONTRACT_VERSION $EXPECTED_VERSION."
 
-log "Sandbox deployment smoke-test PASSED."
+# ... rest of the original script unchanged ...
