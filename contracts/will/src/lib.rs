@@ -568,6 +568,11 @@ const SECONDS_PER_DAY: u64 = 86_400;
 /// canonical value without hardcoding a duplicate.
 pub const MAX_BENEFICIARIES: u32 = 10;
 
+/// Maximum number of hashed commitments registered on a will. These slots
+/// have a separate cap because release reserves their shares without making
+/// a transfer for each slot. Each claim pays at most one share per token.
+pub const MAX_HASHED_BENEFICIARIES: u32 = 10;
+
 /// Maximum number of guardians a single will may have.
 ///
 /// A will can name at most this many guardian addresses. The value is an
@@ -4252,6 +4257,7 @@ impl WillContract {
     /// - [`WillError::InvalidTokenCount`] if the token list is empty or too large.
     /// - [`WillError::FixedAmountExceedsBalance`] if the source's
     ///   `Allocation::FixedAmount` beneficiaries no longer fit the new balance.
+    /// - [`WillError::TooManyBeneficiaries`] if the source exceeds the hashed slot cap.
     #[allow(clippy::too_many_arguments)]
     pub fn clone_will(
         env: Env,
@@ -4272,6 +4278,10 @@ impl WillContract {
         // without performing an emergency_checkin.
         if source.status != WillStatus::Active {
             panic_with_error!(&env, WillError::WillNotActive);
+        }
+
+        if source.hashed_beneficiaries.len() > MAX_HASHED_BENEFICIARIES {
+            panic_with_error!(&env, WillError::TooManyBeneficiaries);
         }
 
         // Re-run the same owner-not-a-guardian / no-duplicate-guardian check
@@ -5655,6 +5665,9 @@ impl WillContract {
     /// beneficiaries. The combined percentages of `beneficiaries` and
     /// `hashed_beneficiaries` must still sum to 100.
     ///
+    /// A will may hold up to [`MAX_HASHED_BENEFICIARIES`] hashed commitments.
+    /// Adding another at the cap fails with [`WillError::TooManyBeneficiaries`].
+    ///
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
@@ -5698,6 +5711,10 @@ impl WillContract {
         owner.require_auth();
         let mut will = load_owned(&env, will_id, &owner);
         assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
+
+        if will.hashed_beneficiaries.len() >= MAX_HASHED_BENEFICIARIES {
+            panic_with_error!(&env, WillError::TooManyBeneficiaries);
+        }
 
         // Validate the new slot before mutating the will, so a rejected call
         // leaves no partial state behind (#371). The length check lives in
