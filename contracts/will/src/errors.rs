@@ -371,15 +371,14 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
-    /// `set_delegate` was called with the owner itself or the contract's own
-    /// address as the delegate (#31). Self-delegation and contract-self
-    /// delegation are meaningless and would let the check-in_reset authority
-    /// point at an address that cannot act independently.
+    /// `retry_owner_refund` was called for a `(will_id, token)` pair with no
+    /// recorded deferred owner refund — either the token was never deferred
+    /// (it transferred successfully during cancellation), it was already
+    /// recovered, or the will is not in a cancelled/refunded state (#213).
     ///
-    /// #184 — published metadata historically assigned code 58 to this
-    /// variant, but 58 is the established `UnclaimedHashedBeneficiary` code
-    /// used by archival clients. The meaning of 58 is deliberately preserved;
-    /// this restored variant takes the next free code, 59, so delegate and
-    /// archival errors stay distinguishable.
-    InvalidDelegate = 59,
+    /// Owner refunds now use the same deferred-delivery model as beneficiary
+    /// payouts: a token that refuses transfer during `cancel_will`,
+    /// `refund_unconfirmed_will` or `guardian_cancel_pending_will` is recorded
+    /// as a recoverable liability instead of rolling back the whole refund.
+    NoDeferredOwnerRefund = 59,
 }

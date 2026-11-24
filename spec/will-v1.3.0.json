@@ -459,6 +459,13 @@
         "preimage: Bytes"
       ],
       "output": "()"
+    },
+    {
+      "name": "keepalive_claimable_will",
+      "inputs": [
+        "will_id: u64"
+      ],
+      "output": "()"
     }
   ],
   "types": {
