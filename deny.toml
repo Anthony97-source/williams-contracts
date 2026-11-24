@@ -7,12 +7,11 @@
 all-features = false
 
 [advisories]
-db-url = "https://github.com/rustsec/advisory-db"
+# Current cargo-deny always denies vulnerabilities; no `vulnerability` field.
+db-urls = ["https://github.com/rustsec/advisory-db"]
 db-path = "~/.cargo/advisory-db"
-# Fail CI on any reported vulnerability.
-vulnerability = "deny"
-# Unmaintained crates are warnings, not hard failures.
-unmaintained = "warn"
+# Report unmaintained crates in the workspace scope (informational, not a hard failure).
+unmaintained = "workspace"
 # Do not fail on yanked crates that are still pinned transitively.
 yanked = "warn"
 ignore = []
