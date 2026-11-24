@@ -6866,9 +6866,11 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     // same for every token, and the percentage loop below needs it to know
     // which beneficiary absorbs the rounding remainder.
     let mut percentage_count: u32 = 0;
+    let mut total_percentage_bps: u64 = 0;
     for beneficiary in will.beneficiaries.iter() {
-        if let Allocation::Percentage(_) = beneficiary.allocation {
+        if let Allocation::Percentage(bp) = beneficiary.allocation {
             percentage_count += 1;
+            total_percentage_bps = total_percentage_bps.saturating_add(bp as u64);
         }
     }
 
@@ -6949,7 +6951,25 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
                 let share = if percentage_index == percentage_count {
                     percentage_remaining
                 } else {
-                    let portion = proportional_share(remaining, bp);
+                    // Issue #179: visible basis points are a split of the
+                    // *visible* pool (after bounty, hashed reserve and fixed
+                    // deductions), not of the original balance. When a hashed
+                    // reserve is present the visible bps sum to less than
+                    // 10,000, so using them raw would under-pay every visible
+                    // beneficiary except the last, which silently absorbs
+                    // the difference as "dust". Renormalise them to 10,000
+                    // over the visible pool; with no hashed reserve the
+                    // normalisation is a no-op.
+                    let effective_bps = if total_percentage_bps == 0 {
+                        0_u32
+                    } else {
+                        ((bp as u64)
+                            .saturating_mul(10_000)
+                            .checked_div(total_percentage_bps)
+                            .unwrap_or(0)
+                            .min(10_000)) as u32
+                    };
+                    let portion = proportional_share(remaining, effective_bps);
                     percentage_remaining -= portion;
                     portion
                 };
