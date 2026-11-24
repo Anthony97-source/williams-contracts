@@ -90,6 +90,8 @@ pub(crate) enum DataKey {
     ProtocolStats,
     /// Active will count counter.
     ActiveWillCount,
+    /// Set when a repair has rebuilt all token totals from the live wills.
+    LockedTotalsRebuilt,
     /// List of distinct tokens currently with active locked balances in the protocol.
     ProtocolTokens,
     /// Discrete total locked amount for a single token across the protocol.
@@ -181,6 +183,8 @@ pub fn get_total_locked(env: &Env, token: &Address) -> i128 {
     let key = DataKey::TotalLocked(token.clone());
     if let Some(val) = env.storage().persistent().get(&key) {
         val
+    } else if env.storage().instance().has(&DataKey::LockedTotalsRebuilt) {
+        0
     } else if let Some(val) = env.storage().instance().get(&key) {
         val
     } else if let Some(stats) = env
@@ -276,7 +280,7 @@ pub fn get_protocol_stats(env: &Env) -> ProtocolStats {
     }
 }
 
-/// Persists protocol statistics into discrete storage entries and instance storage.
+/// Replaces all protocol statistics with an authoritative rebuild.
 pub fn save_protocol_stats(env: &Env, stats: &ProtocolStats) {
     set_active_will_count(env, stats.active_will_count);
     let old_tokens = get_protocol_tokens(env);
@@ -298,7 +302,11 @@ pub fn save_protocol_stats(env: &Env, stats: &ProtocolStats) {
     env.storage()
         .instance()
         .set(&DataKey::ProtocolTokens, &tokens);
-    env.storage().instance().set(&DataKey::ProtocolStats, stats);
+    env.storage().instance().remove(&DataKey::ProtocolStats);
+    // Old instance totals outside the token index cannot be enumerated here.
+    env.storage()
+        .instance()
+        .set(&DataKey::LockedTotalsRebuilt, &true);
 }
 
 /// Increments the active-will counter by one.
@@ -345,6 +353,22 @@ pub fn adjust_locked_value(env: &Env, token: &Address, delta: i128) {
     } else {
         env.storage().persistent().remove(&key);
         let tokens = get_protocol_tokens(env);
+        let instance = env.storage().instance();
+        if !instance.has(&DataKey::LockedTotalsRebuilt) {
+            instance.remove(&key);
+            // Preserve the remaining snapshot totals for tokens that have
+            // yet to migrate to discrete storage.
+            if let Some(mut stats) = instance.get::<_, ProtocolStats>(&DataKey::ProtocolStats) {
+                let mut remaining = Vec::new(env);
+                for entry in stats.total_locked_by_token.iter() {
+                    if entry.token != *token {
+                        remaining.push_back(entry);
+                    }
+                }
+                stats.total_locked_by_token = remaining;
+                instance.set(&DataKey::ProtocolStats, &stats);
+            }
+        }
         let mut updated = Vec::new(env);
         for t in tokens.iter() {
             if t != *token {
