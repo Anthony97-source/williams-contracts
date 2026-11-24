@@ -45,6 +45,8 @@ data, in order.
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
 | `keepalive` | `keepalive_claim_reserve` | `(caller: Address, new_ttl: u32)` |
 
+The `batchchk` event lists only wills updated by the batch, in input order. No summary is emitted when every will is skipped.
+
 ## `archived`
 
 `archive_will` moves a `Released`, `Cancelled` or `Settled` will out of active storage
