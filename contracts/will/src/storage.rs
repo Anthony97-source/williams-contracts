@@ -79,7 +79,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 /// make `migrate_will` no-op on every will and the version stamp would stop
 /// meaning anything (#367).
 #[allow(dead_code)]
-pub const CURRENT_SCHEMA_VERSION: u32 = 2;
+pub const CURRENT_SCHEMA_VERSION: u32 = 3;
 
 #[contracttype]
 #[derive(Clone)]
