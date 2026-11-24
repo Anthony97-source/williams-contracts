@@ -45,6 +45,21 @@ jobs:
       - name: Lint timestamp/period arithmetic in will contract
         run: bash scripts/lint-checked-arithmetic.sh
 
+  release-guards:
+    name: Contract Version and Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify CONTRACT_VERSION matches crate version and git version tag
+        run: bash .github/scripts/check-contract-version.sh
+      - name: Verify changelog for contract version changes
+        if: github.event_name == 'pull_request'
+        env:
+          CHANGELOG_BASE: ${{ github.event.pull_request.base.sha }}
+        run: bash .github/scripts/check-changelog.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest
