@@ -21,9 +21,10 @@ test:
 lint:
     cargo clippy --all-targets -- -D warnings
 
-# Build the contract for the wasm32v1-none target in release mode.
+# Build the contract for the wasm32v1-none target in release mode using the
+# canonical locked build command shared by CI, size/spec checks and deployment.
 build:
-    cargo build --workspace --release --target wasm32v1-none
+    scripts/build-wasm.sh
 
 # Format all Rust source in the workspace.
 fmt:
@@ -34,9 +35,11 @@ fmt-check:
     cargo fmt --all -- --check
 
 # Scan Cargo.lock for known vulnerabilities (same check as the Security
-# Audit CI workflow). Requires cargo-audit: `cargo install cargo-audit`.
+# Audit CI workflow). Loads the repository advisory configuration from
+# audit.toml explicitly so local runs match CI. Requires cargo-audit:
+# `cargo install cargo-audit`.
 audit:
-    cargo audit --file Cargo.lock --deny warnings
+    cargo audit --config audit.toml --file Cargo.lock --deny warnings
 
 # Verify the exported contract spec is up to date (fails if stale).
 spec:

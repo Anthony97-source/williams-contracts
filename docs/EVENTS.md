@@ -44,72 +44,12 @@ data, in order.
 | `split` | `split_will` (topic is the original id) | `(new_id: u64, owner: Address, split_amount: i128)` |
 | `hadd` | `add_hashed_beneficiary` | `(owner: Address, commitment: Bytes, percentage: u32)` |
 | `hclaim` | `reveal_and_claim` | `(claimant: Address, amount: i128)` |
-| `lftback` | `distribute` (leftover refunded to owner) | `(token: Address, owner: Address, amount: i128)` |
-| `payfail` | `distribute`, `reveal_and_claim` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
-| `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128, fully_resolved: bool)` |
+| `payfail` | `distribute`, `reveal_and_claim`, `cancel_will`, `refund_unconfirmed_will`, `guardian_cancel_pending_will` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
+| `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128)` |
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
-| `portmig` | `migrate_owner_portfolio` (second topic is `old_owner`) | `new_owner: Address` |
+| `keepalive` | `keepalive_claim_reserve` | `(caller: Address, new_ttl: u32)` |
 
-## `guardup`
-
-`update_guardians` and `update_will_settings` (when the guardian list changes) both publish this event. The data is a tuple, not a scalar:
-
-- `owner`: the will's owner.
-- `guardians`: the full new guardian list (`Vec<Guardian>`, address + weight pairs), already applied. Indexers can reconstruct the current eligible voter set without a follow-up `get_will` call.
-
-When `update_will_settings` is the caller, `guardup` is published alongside `setupd`. Indexers subscribed only to `guardup` will catch guardian changes regardless of which entry point made them.
-
-## `gaccept` and `greject`
-
-These events gate guardian vote eligibility. A guardian named in the will cannot cast a `guardian_trigger` vote until `gaccept` is emitted for them.
-
-- `gaccept` — published by `accept_guardian_role`: `guardian: Address` (the consenting guardian).
-- `greject` — published by `reject_guardian_role`: `guardian: Address` (the rejecting guardian).
-
-Indexers reconstructing the eligible-voter set from events must track both. A guardian who appears in `guardup` but not yet in `gaccept` is named but not yet eligible.
-
-## `grext`
-
-Published by `request_grace_extension` when the owner stacks additional grace days on a `Triggered` will (#102).
-
-- `owner`: the requesting owner.
-- `extra_days`: days added in this call.
-- `cumulative_extension_days`: total extension days accumulated across all calls for this grace cycle.
-
-## `merged` (payload change)
-
-The `merged` event carries a fourth field, `beneficiaries`, added after `new_balance`. Indexers that previously decoded only three fields must add the fourth:
-
-`(owner: Address, consumed_will_id: u64, new_balance: i128, beneficiaries: Vec<Beneficiary>)`
-
-`beneficiaries` is the surviving will's full post-merge beneficiary list (already proportionally recalculated). An indexer can reconstruct the new split without a follow-up `get_will` call.
-
-## `hadd`
-
-Published by `add_hashed_beneficiary` when the owner registers a hashed-commitment beneficiary (#185). Without this event, indexers reconstructing will state from events alone would miss every hashed beneficiary silently.
-
-- `owner`: the will's owner.
-- `commitment`: the commitment `Bytes` (the hash pre-image is not revealed until `reveal_and_claim`).
-- `percentage`: basis-point allocation reserved for this commitment.
-
-## `lftback`
-
-Published by `distribute` when a `FixedAmount`-only will has a leftover balance that no beneficiary can receive (#383). The fixed amounts are paid and the remainder is returned to the owner.
-
-- `token`: the token whose leftover balance was refunded.
-- `owner`: the address that received the refund.
-- `amount`: the refunded amount.
-
-This only fires on under-allocated `FixedAmount` wills. It does not fire on `Percentage`-only wills.
-
-## `portmig`
-
-Published by `migrate_owner_portfolio` after the full owner index (all `OwnerWills` and `OwnerStatusWills` buckets) has been transferred to a new address and the old keys have been pruned.
-
-- **Second topic**: `old_owner: Address` (not `will_id`; this event is portfolio-scoped, not will-scoped).
-- **Data**: `new_owner: Address`.
-
-Indexers maintaining identity mappings can update them from this single event without re-scanning individual wills.
+The `batchchk` event lists only wills updated by the batch, in input order. No summary is emitted when every will is skipped.
 
 ## `archived`
 
@@ -137,6 +77,38 @@ never to receive a stale or historical timestamp.
 - `checkin_period_days`: updated check-in period in days.
 - `grace_period_days`: updated grace period in days.
 - `next_deadline`: ledger timestamp (Unix seconds) for the next check-in deadline (`now + checkin_period_days * 86_400`), guaranteed to be strictly in the future.
+
+## Failed payouts and deferred owner refunds
+
+`payfail` is published whenever a token transfer cannot be delivered and the
+amount is instead recorded as a deferred payout. This covers beneficiary
+distributions (`distribute`, `reveal_and_claim`) and owner refunds
+(`cancel_will`, `refund_unconfirmed_will`, `guardian_cancel_pending_will`).
+Owner refunds are isolated per token: a token that refuses transfer no longer
+rolls back refunds of the other tokens, and the undelivered amount is recorded
+exactly once as a recoverable deferred payout.
+
+Events are not authoritative for outstanding amounts. A deferred payout can be
+retried (`payretry`) or redirected (`payredir`), so an indexer that only replays
+events may hold a stale amount. Clients should query the read-only getter
+`get_failed_payout_amount(will_id, token, recipient)` for the current recorded
+amount of an exact tuple. It returns `Option<i128>`: `Some(amount)` while the
+payout is still outstanding and `None` once the tuple is missing or has been
+resolved (retried or redirected). The query is bounded to a single tuple, does
+not mutate state, and keeps working after the parent will has been archived,
+because payout records are independent of the will's lifecycle.
+
+## Guardian cancellation votes
+
+`gcvote` and `gcancel` describe cancellation votes during a `Triggered`
+recovery. As with deferred payouts, events can become stale as votes expire or
+are reset by a successful cancellation. Guardians and recovery dashboards
+should query `get_guardian_cancel_vote_status(will_id, guardian)` for the
+authoritative live record. It is a read-only, bounded query that applies the
+same expiry and consent rules as cancellation tallying, distinguishes cancel
+votes from trigger votes (`get_guardian_vote_status`), and reports expired or
+withdrawn votes consistently with the quorum rules. It requires no
+authorization and performs no state mutation.
 
 ## Failed operations
 
