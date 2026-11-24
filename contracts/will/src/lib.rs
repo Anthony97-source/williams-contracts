@@ -4831,6 +4831,7 @@ impl WillContract {
     ///   `1..=`total merged guardian weight while guardians exist (#17).
     pub fn merge_wills(env: Env, owner: Address, will_id_a: u64, will_id_b: u64) {
         owner.require_auth();
+        let now = env.ledger().timestamp();
 
         if will_id_a == will_id_b {
             panic_with_error!(&env, WillError::SameWillId);
@@ -4954,6 +4955,9 @@ impl WillContract {
         //   either will has consented; a guardian who is `Rejected` on both
         //   stays `Rejected`, which is terminal for them and keeps them out
         //   of the vote.
+        // Issue #181: remember the survivor's committee before it is
+        // overwritten so a changed committee can be given a fresh cooldown.
+        let original_guardians: Vec<Guardian> = will_a.guardians.clone();
         let mut merged_guardians: Vec<Guardian> = Vec::new(&env);
         for guardian in will_a.guardians.iter() {
             merged_guardians.push_back(guardian);
@@ -5025,6 +5029,20 @@ impl WillContract {
         storage::reset_guardian_cancel_votes(&env, &will_a);
         storage::reset_guardian_votes(&env, &will_b);
         storage::reset_guardian_cancel_votes(&env, &will_b);
+
+        // Issue #181: a newly introduced guardian (or a changed weight/
+        // consent) gets a fresh cooldown. Keeping the survivor's old
+        // `guardian_list_updated_at` would let the imported committee vote
+        // immediately under an already-expired cooldown. An unchanged
+        // committee keeps its existing elapsed cooldown.
+        let guardians_changed = merged_guardians.len() != original_guardians.len()
+            || merged_guardians
+                .iter()
+                .zip(original_guardians.iter())
+                .any(|(merged, original)| merged != original);
+        if guardians_changed {
+            will_a.guardian_list_updated_at = now;
+        }
 
         // Update will_a with merged state
         will_a.beneficiaries = merged_beneficiaries;
