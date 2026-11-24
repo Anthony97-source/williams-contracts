@@ -407,6 +407,27 @@ mod issue_57_58_59_60_test;
 mod migrate_will_test;
 #[cfg(test)]
 mod issue_110_test;
+
+#[cfg(test)]
+mod issue_101_test;
+
+#[cfg(test)]
+mod issue_102_test;
+
+#[cfg(test)]
+mod issue_103_test;
+
+#[cfg(test)]
+mod issue_104_test;
+
+#[cfg(test)]
+mod issue_105_test;
+
+#[cfg(test)]
+mod issue_107_test;
+
+#[cfg(test)]
+mod issue_108_test;
 #[cfg(test)]
 mod protocol_stats_test;
 #[cfg(test)]
@@ -505,12 +526,25 @@ pub use types::{
 /// so that SDKs and apps can detect version mismatches at runtime via
 /// [`WillContract::get_contract_version`].
 ///
-/// Current value: **1.3.2** → `1_003_002`. 1.1.0 made `get_triggered_wills`
+/// Current value: **1.4.0** → `1_004_000`. 1.1.0 made `get_triggered_wills`
 /// take a `(cursor, limit)` page instead of returning the whole index (#368);
 /// 1.2.0 bound `reveal_and_claim` to the address in the pre-image (#369);
 /// 1.3.0 added `WillStatusTransition::seq` and made `check_in`/
 /// `batch_check_in` append audit-trail entries (#500).
-pub const CONTRACT_VERSION: u32 = 1_003_002;
+pub const CONTRACT_VERSION: u32 = 1_004_000;
+
+/// The version string embedded in the contract's Wasm metadata under the
+/// `"Version"` key by the `contractmeta!` invocation below.
+///
+/// This is the single source of truth for the metadata version: the macro
+/// reads it directly, and `issue_272_test.rs` asserts it agrees with
+/// [`CONTRACT_VERSION`] instead of keeping an independent copy. Changing the
+/// embedded metadata version therefore necessarily changes this constant, so
+/// the test can no longer pass while the compiled metadata has drifted.
+///
+/// Current value: **1.3.0** (matching `CONTRACT_VERSION`'s semver-decoded
+/// form).
+pub const CONTRACTMETA_VERSION: &str = "1.3.0";
 
 /// Number of seconds in a day, used to convert the day-denominated periods
 /// stored on a `Will` into absolute ledger timestamps.
@@ -671,9 +705,11 @@ soroban_sdk::contractmeta!(
     key = "Description",
     val = "Trustless on-chain inheritance and dead man's switch protocol for Stellar Soroban"
 );
-// Kept in sync with CONTRACT_VERSION's semver-decoded form by
-// issue_272_test.rs; bump both together.
-soroban_sdk::contractmeta!(key = "Version", val = "1.3.2");
+// Reads the shared `CONTRACTMETA_VERSION` constant rather than a second
+// literal, so the embedded metadata and the value issue_272_test.rs checks
+// cannot drift apart; bump `CONTRACT_VERSION` and `CONTRACTMETA_VERSION`
+// together.
+soroban_sdk::contractmeta!(key = "Version", val = CONTRACTMETA_VERSION);
 soroban_sdk::contractmeta!(
     key = "Homepage",
     val = "https://github.com/Williams/williams-contracts"
@@ -1328,6 +1364,7 @@ impl WillContract {
             will.guardian_vote_weight = 0;
             will.guardian_votes = 0;
 
+            storage::remove_owner_status_index(&env, &owner, prior_status, will_id);
             storage::remove_owner_index(&env, &owner, will_id);
             for beneficiary in will.beneficiaries.iter() {
                 storage::remove_beneficiary_index(&env, &beneficiary.address, will_id);
@@ -1387,51 +1424,10 @@ impl WillContract {
     /// ```
     pub fn check_in(env: Env, will_id: u64, caller: Address) {
         caller.require_auth();
-        let mut will = load_will(&env, will_id);
-        assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-        assert_owner_or_delegate(&env, &will, &caller);
-
         let now = env.ledger().timestamp();
-
-        // Rate-limit state updates: only refresh `last_checkin` if at least
-        // `MIN_CHECKIN_INTERVAL` has elapsed since the last check-in.
-        // Consecutive check-ins within the same window are no-ops that avoid
-        // redundant history writes (#101).
-        if now < will.last_checkin.saturating_add(MIN_CHECKIN_INTERVAL) {
-            return;
+        if record_check_in(&env, will_id, &caller, now) {
+            storage::bump_instance_ttl(&env);
         }
-
-        will.last_checkin = now;
-        let next_deadline = checked_add_timestamp(
-            &env,
-            now,
-            checked_days_to_seconds(&env, will.checkin_period_days),
-        );
-        storage::save_will(&env, &will);
-        storage::bump_instance_ttl(&env);
-
-        // Refresh the owner index TTL on every check-in so that an account
-        // inactive for longer than BUMP_AMOUNT ledgers (roughly 60 days) does
-        // not find its OwnerWills entry expired the next time it calls
-        // create_will (#41).
-        storage::refresh_owner_index_ttl(&env, &will.owner);
-
-        // Record the check-in in the same audit trail status transitions use
-        // (#500). `status` does not change, so this is a same-status entry
-        // (`Active` -> `Active`); what matters is that every event that moves
-        // `last_checkin` -- not just the ones that also move `status` -- gets
-        // a sequenced entry, so a reader of the trail never sees a status
-        // change following a check-in that left no trace of when it happened.
-        record_transition(
-            &env,
-            will_id,
-            WillStatus::Active,
-            WillStatus::Active,
-            &caller,
-            symbol_short!("checkin"),
-        );
-
-        events::check_in(&env, will_id, &caller, next_deadline);
     }
 
     /// Sets or replaces the delegate address for `will_id`. Only callable
@@ -1531,6 +1527,10 @@ impl WillContract {
     /// for a principal) to batch check-ins without forcing individual calls
     /// per will (#3).
     ///
+    /// Wills checked in less than 60 seconds ago are validated but skipped.
+    /// The batch event lists only updated IDs, in input order, and is emitted
+    /// only if at least one will was updated.
+    ///
     /// At most `batch_check_in_limit::MAX_BATCH_CHECK_IN` (50) IDs are accepted
     /// per call; longer inputs panic with [`WillError::BatchTooLarge`]. Every ID
     /// must also be distinct — a repeated ID panics with
@@ -1549,43 +1549,20 @@ impl WillContract {
     pub fn batch_check_in(env: Env, will_ids: Vec<u64>, caller: Address) {
         caller.require_auth();
         batch_check_in_limit::assert_within_limit(&env, will_ids.len());
-        // Reject repeats before any storage write, so a batch can never be
-        // partially applied and the `batch_checkin` count always matches the
-        // number of distinct wills actually checked in (#355).
         batch_check_in_limit::assert_no_duplicates(&env, &will_ids);
         let now = env.ledger().timestamp();
-        let count = will_ids.len();
+        let mut updated = Vec::new(&env);
 
         for will_id in will_ids.iter() {
-            let mut will = load_will(&env, will_id);
-            assert_status(&env, &will, WillStatus::Active, WillError::WillNotActive);
-            assert_owner_or_delegate(&env, &will, &caller);
-
-            will.last_checkin = now;
-            let next_deadline = checked_add_timestamp(
-                &env,
-                now,
-                checked_days_to_seconds(&env, will.checkin_period_days),
-            );
-            storage::save_will(&env, &will);
-
-            // Same per-will audit entry as the single-will `check_in` path,
-            // so a batched check-in is indistinguishable in the trail from
-            // one done individually (#500).
-            record_transition(
-                &env,
-                will_id,
-                WillStatus::Active,
-                WillStatus::Active,
-                &caller,
-                symbol_short!("checkin"),
-            );
-
-            events::check_in(&env, will_id, &caller, next_deadline);
+            if record_check_in(&env, will_id, &caller, now) {
+                updated.push_back(will_id);
+            }
         }
 
-        events::batch_checkin(&env, &caller, &will_ids, count);
-        storage::bump_instance_ttl(&env);
+        if !updated.is_empty() {
+            events::batch_checkin(&env, &caller, &updated, updated.len());
+            storage::bump_instance_ttl(&env);
+        }
     }
 
     /// Starts the grace period for `will_id` once the check-in deadline has
@@ -1964,6 +1941,33 @@ impl WillContract {
     ///   already retried successfully, or the arguments don't match).
     /// - Propagates the token contract's own panic if this attempt also
     ///   fails; the record is left in place for a future retry.
+    /// Returns the amount of an exact failed-payout tuple
+    /// `(will_id, token, beneficiary)` that is still outstanding, or `None`
+    /// when there is nothing left to pay.
+    ///
+    /// Failed payouts are recorded by [`pay_or_record_failure`] whenever a
+    /// token transfer is refused during distribution or an owner refund, and
+    /// are cleared once the tuple is settled through
+    /// [`retry_failed_payout`] or [`redirect_failed_payout`]. This getter is
+    /// the authoritative, non-mutating way for recovery UIs to tell the two
+    /// cases apart: `None` means the tuple is unknown **or** already
+    /// resolved, `Some(amount)` means exactly `amount` is still owed.
+    ///
+    /// The record is independent of the parent will's lifecycle: it is
+    /// looked up in the live namespace first and falls back to the archived
+    /// one, so the query keeps working after the will has been archived, and
+    /// it reflects the current amount after a redirection or a retry.
+    ///
+    /// Requires no authorization and mutates no state.
+    pub fn get_failed_payout_amount(
+        env: Env,
+        will_id: u64,
+        token: Address,
+        beneficiary: Address,
+    ) -> Option<i128> {
+        storage::get_failed_payout(&env, will_id, &token, &beneficiary)
+    }
+
     pub fn retry_failed_payout(env: Env, will_id: u64, token: Address, recipient: Address) {
         let amount = match storage::get_failed_payout(&env, will_id, &token, &recipient) {
             Some(amount) => amount,
@@ -3843,6 +3847,56 @@ impl WillContract {
     /// - [`WillError::NotGuardian`] if `guardian` is not one of the will's guardians.
     /// - [`WillError::AlreadyVoted`] if `guardian` already cast a cancel vote in this cycle.
     /// - [`WillError::GuardianCooldownActive`] if the guardian-list cooldown has not elapsed.
+    /// Returns the timestamp of `guardian`'s live **cancel** vote on
+    /// `will_id`, or `None` when there is no vote that currently counts
+    /// toward the cancellation quorum.
+    ///
+    /// This is the read-only counterpart of [`guardian_cancel_trigger`] and
+    /// is deliberately distinct from [`get_guardian_vote_status`] /
+    /// [`get_guardian_votes`], which report *trigger* (release) votes: the
+    /// two namespaces are independent, so a guardian can hold a live vote in
+    /// one and not the other.
+    ///
+    /// The result applies exactly the same rules as
+    /// `storage::recount_guardian_cancel_votes` / `has_guardian_cancel_voted`:
+    ///
+    /// - `None` when the guardian never voted, when their vote has expired
+    ///   (older than the will's `grace_period_days`), when the vote was
+    ///   withdrawn (e.g. via [`reject_guardian_role`]), or when the guardian
+    ///   is no longer a consented member of the will's guardian list.
+    /// - `Some(timestamp)` with the ledger timestamp the vote was cast at
+    ///   otherwise.
+    ///
+    /// Requires no authorization and mutates no state, so recovery
+    /// dashboards can poll it freely.
+    ///
+    /// # Panics
+    /// - [`WillError::WillNotFound`] if the will does not exist.
+    pub fn get_guardian_cancel_vote_status(
+        env: Env,
+        will_id: u64,
+        guardian: Address,
+    ) -> Option<u64> {
+        let will = load_will(&env, will_id);
+        let now = env.ledger().timestamp();
+        let expiry_days = will.grace_period_days;
+
+        // Only current, consented guardians can contribute to quorum, so a
+        // vote from anyone else is reported as absent (#453).
+        let consented = will
+            .guardians
+            .iter()
+            .any(|g| g.address == guardian && g.consent == GuardianConsent::Accepted);
+        if !consented {
+            return None;
+        }
+
+        if !storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days) {
+            return None;
+        }
+        storage::get_guardian_cancel_vote(&env, will_id, &guardian)
+    }
+
     pub fn guardian_cancel_trigger(env: Env, will_id: u64, guardian: Address) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
@@ -5026,7 +5080,7 @@ impl WillContract {
     /// For the full, untrimmed history, follow the off-chain event log: every
     /// state-mutating entry point publishes an event, and that log is never
     /// trimmed. Callers who want to walk the retained trail in bounded slices
-    /// should prefer [`WillContract::get_will_history_page`].
+    /// should prefer [`WillContract::get_will_history_page_v2`].
     pub fn get_will_history(env: Env, will_id: u64) -> Vec<WillStatusTransition> {
         storage::get_history(&env, will_id)
     }
@@ -5038,30 +5092,25 @@ impl WillContract {
     /// trail is itself capped at [`storage::MAX_HISTORY_ENTRIES`] transitions
     /// (#392); this bounds the *per-call* cost on top of that.
     ///
-    /// # Parameters
-    /// - `will_id`: the will whose trail to read.
-    /// - `cursor`: optional sequence number (`WillStatusTransition::seq`).
-    ///   Only entries with `seq` **strictly greater than** the cursor are
-    ///   returned; pass `None` or `Some(0)` to start from the beginning.
-    ///   To page forward, pass the `seq` of the last entry received as the
-    ///   next cursor.
-    /// - `limit`: maximum number of transitions to return. Capped at
-    ///   [`storage::MAX_PAGE_SIZE`].
-    ///
-    /// # Pagination
-    /// 1. Call with `cursor=None, limit=N`.
-    /// 2. If the page has `N` entries, call again with
-    ///    `cursor = Some(last_entry.seq as u32)`.
-    /// 3. Repeat until a page comes back shorter than `N`.
-    ///
-    /// The seq-based cursor is stable across history trimming: when the oldest
-    /// entries are dropped to enforce the cap, no existing `seq` value shifts,
-    /// so a stored cursor never silently skips or re-reads entries on the next
-    /// call (#59).
+    /// This compatibility entry point accepts u32 cursors. Use
+    /// [`Self::get_will_history_page_v2`] for the full sequence range.
     pub fn get_will_history_page(
         env: Env,
         will_id: u64,
         cursor: Option<u32>,
+        limit: u32,
+    ) -> Vec<WillStatusTransition> {
+        storage::paginate_history(&env, will_id, cursor.map(u64::from), limit)
+    }
+
+    /// Returns up to `limit` retained history entries after the exclusive
+    /// u64 sequence cursor. Pass `None` or `Some(0)` for the first page.
+    /// To continue, pass the last returned entry's `seq` unchanged. Sequence
+    /// numbers remain stable as old entries are trimmed.
+    pub fn get_will_history_page_v2(
+        env: Env,
+        will_id: u64,
+        cursor: Option<u64>,
         limit: u32,
     ) -> Vec<WillStatusTransition> {
         storage::paginate_history(&env, will_id, cursor, limit)
@@ -5217,6 +5266,69 @@ impl WillContract {
         if let Err(err) = storage::extend_archived_will_ttl(&env, will_id) {
             panic_with_error!(&env, err);
         }
+    }
+
+    /// Extends the persistent storage TTL of a **live** `Released` will that
+    /// still has outstanding hashed-beneficiary reserves (#211).
+    ///
+    /// # Why this exists
+    ///
+    /// [`storage::save_will`] deliberately stops renewing the TTL of terminal
+    /// records so that fully discharged wills age out of persistent storage
+    /// and stop costing rent. A `Released` will that still holds reserves for
+    /// hashed beneficiaries who have not yet called
+    /// [`WillContract::reveal_and_claim`] is *not* fully discharged, though:
+    /// its live `Will` entry is the only thing `reveal_and_claim` can load to
+    /// verify a commitment. Without a maintenance path, a beneficiary who
+    /// claims over a long interval — or simply waits — could find the record
+    /// TTL-archived by the network and be forced through a state-restore
+    /// transaction before their reserved share becomes claimable.
+    ///
+    /// [`WillContract::extend_archived_will_ttl`] cannot help here: it
+    /// operates on [`storage::DataKey::ArchivedWill`], a different key that
+    /// only exists after [`WillContract::archive_will`] has run, and archival
+    /// is itself blocked while hashed reserves are unclaimed (#1).
+    ///
+    /// # Rent policy
+    ///
+    /// - **Callable by anyone.** No `require_auth` is enforced: keeping a
+    ///   claimable record alive is a public good, and the caller pays the
+    ///   transaction fee for the TTL bump.
+    /// - **Only for records with real outstanding claims.** A will whose
+    ///   hashed beneficiaries have all claimed has no reason to stay live, so
+    ///   this rejects it with [`WillError::NoOutstandingClaims`] and the
+    ///   record keeps its terminal rent behaviour (it ages out, and
+    ///   [`WillContract::archive_will`] becomes callable).
+    /// - **Claims renew the record too.** [`WillContract::reveal_and_claim`]
+    ///   extends the same TTL whenever unclaimed reserves remain after a
+    ///   successful claim, so claiming one slot of several keeps the record
+    ///   alive for the others without a separate keepalive call.
+    ///
+    /// # What it does not do
+    ///
+    /// This is purely a rent-maintenance operation. It does not mutate
+    /// balances, beneficiaries, hashed commitments, permissions or status —
+    /// the will is loaded, checked, and its TTL extended. Entitlements are
+    /// exactly what they were before the call.
+    ///
+    /// # Panics
+    /// - [`WillError::WillNotFound`] if no live will exists with this id (it
+    ///   was never created, was archived, or already TTL-expired).
+    /// - [`WillError::WillNotSettled`] if the will is not `Released`.
+    /// - [`WillError::NoOutstandingClaims`] if the will is `Released` but
+    ///   every hashed beneficiary has already claimed.
+    pub fn keepalive_released_will(env: Env, will_id: u64) {
+        let will = load_will(&env, will_id);
+        if will.status != WillStatus::Released {
+            panic_with_error!(&env, WillError::WillNotSettled);
+        }
+        // Fully discharged records keep terminal rent behaviour: no
+        // outstanding claim means no reason to pay to keep the entry alive.
+        if unclaimed_hashed_bps(&will.hashed_beneficiaries) == 0 {
+            panic_with_error!(&env, WillError::NoOutstandingClaims);
+        }
+        storage::extend_will_ttl(&env, will_id);
+        storage::bump_instance_ttl(&env);
     }
 
     // -----------------------------------------------------------------------
@@ -5393,11 +5505,36 @@ impl WillContract {
         // into the child's. `token`/`balance` mirror the primary (first)
         // token in `tokens`, same as `balances`, which remains the
         // authoritative multi-token ledger.
+        // A secondary token whose entire balance moves to the child is
+        // *removed* from the source map rather than left as a zero entry
+        // (#216): `MAX_TOKENS` counts keys, so a zeroed key would keep
+        // occupying a funding slot and block `top_up` of a replacement token
+        // even though the source no longer holds any of it. Partially funded
+        // entries stay as-is. The primary token's mirror is never removed --
+        // `Will::token`/`Will::balance` must keep pointing at a real key --
+        // so an emptied primary is represented as an explicit zero, which
+        // preserves the primary-denomination semantics fixed claims rely on.
         for (token_addr, amt) in child_balances.iter() {
             let held = source.balances.get(token_addr.clone()).unwrap_or(0);
-            source.balances.set(token_addr, held - amt);
+            let remaining = held - amt;
+            if remaining == 0 && token_addr != source.token {
+                source.balances.remove(token_addr);
+            } else {
+                source.balances.set(token_addr, remaining);
+            }
         }
         source.balance = source.balances.get(source.token.clone()).unwrap_or(0);
+
+        // Reconcile the keeper bounty target (#216): if the bounty was
+        // denominated in a token whose balance just moved entirely to the
+        // child, the source can no longer pay it. Drop the target so the
+        // source falls back to the default bounty token selection instead of
+        // pointing at a token it no longer holds.
+        if let Some(bounty_token) = source.keeper_bounty_token.clone() {
+            if !source.balances.contains_key(bounty_token) {
+                source.keeper_bounty_token = None;
+            }
+        }
 
         let (primary_token, _) = tokens.get_unchecked(0);
         let primary_amount = child_balances.get(primary_token.clone()).unwrap_or(0);
@@ -5534,16 +5671,8 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to add the hashed beneficiary to.
     /// - `owner`: must be the primary owner.
-    /// - `commitment`: 32-byte SHA-256 hash of the pre-image
-    ///   `beneficiary.clone().to_xdr() || salt` (see [`Self::reveal_and_claim`]).
-    /// - `percentage`: share of the will's balance for this beneficiary.
-    ///
-    /// # Panics
-    /// - [`WillError::NotOwner`] / [`WillError::WillNotActive`]
-    /// - [`WillError::InvalidPercentages`] if total percentages would exceed 100.
-    /// - [`WillError::InvalidPreimage`] if `commitment` is not a 32-byte digest.
-    /// - `commitment`: SHA-256 hash of the pre-image `address_bytes || salt_bytes`.
-    ///   Must be exactly 32 bytes — see the validation rules below.
+    /// - `commitment`: 32-byte digest `sha256(sha256(xdr(beneficiary)) || salt)`.
+    ///   See [`Self::reveal_and_claim`] for the pre-image layout.
     /// - `percentage`: share of the will's balance for this beneficiary, in
     ///   basis points. Must be greater than zero.
     ///
@@ -5611,11 +5740,6 @@ impl WillContract {
     /// Verifies a pre-image against a stored commitment hash and, if correct,
     /// immediately transfers that beneficiary's share to the revealed address.
     ///
-    /// The pre-image must be `claimant.clone().to_xdr() || salt`: the XDR encoding of
-    /// the beneficiary `Address` followed by a random salt chosen at
-    /// registration time. The contract checks that the pre-image starts with
-    /// the XDR of `claimant`, so the commitment is bound to one payout address.
-    ///
     /// # Replay protection (#440)
     ///
     /// - Each hashed slot has a `claimed` flag that is set and persisted in
@@ -5625,7 +5749,7 @@ impl WillContract {
     /// - Because the pre-image is bound to `claimant` and `claimant` must
     ///   authorize the call, an attacker who observes the pre-image in a
     ///   pending or past transaction cannot resubmit it with their own
-    ///   address as the recipient ([`WillError::InvalidPreimage`]).
+    ///   address as the recipient ([`WillError::PreimageAddressMismatch`]).
     /// - Soroban authorization entries carry their own nonce and expiration
     ///   ledger, so the signed invocation itself cannot be replayed.
     /// ## Pre-image layout
@@ -5637,23 +5761,11 @@ impl WillContract {
     /// bytes 32..64  a random 32-byte salt chosen by the beneficiary
     /// ```
     ///
-    /// The **address fingerprint** is
-    /// `sha256(xdr(beneficiary_address))[0..32]` — the first
-    /// [`PREIMAGE_ADDRESS_LENGTH`] bytes of the SHA-256 digest of the
-    /// beneficiary address's XDR encoding. `reveal_and_claim` recomputes it
-    /// from `claimant` and requires the two to be equal (#369).
-    ///
-    /// Earlier documentation described these first 32 bytes as "the raw bytes
-    /// of the beneficiary `Address`". That was never implementable as written:
-    /// a Soroban address does not serialise to 32 bytes (`Address::to_xdr`
-    /// yields a tagged XDR encoding — 36 bytes for a contract account — and a
-    /// different length for an account or muxed account), so no conforming
-    /// pre-image could ever be decoded back into an address. A fixed 32-byte
-    /// fingerprint of the address is the same length the pre-image layout has
-    /// always reserved, is computable by the beneficiary at registration
-    /// time, and is not invertible: to replay someone else's pre-image an
-    /// attacker would have to find an address whose SHA-256 digest collides
-    /// with theirs.
+    /// Compute the fingerprint as the full `sha256(xdr(beneficiary))` digest.
+    /// The XDR is the Stellar `ScVal::Address` encoding returned by
+    /// `Address::to_xdr`. Concatenate the digest and exactly 32 random salt bytes,
+    /// then store `sha256(preimage)` as the commitment. The earlier recipe
+    /// that concatenated raw address XDR with salt is incompatible with this layout.
     ///
     /// The total length is checked first; anything else is rejected with
     /// [`WillError::InvalidPreimageLength`] (#370).
@@ -5668,7 +5780,7 @@ impl WillContract {
     /// the pre-image — a keeper bot, a block explorer, a mempool watcher —
     /// could replay it with their *own* address and take the reserved share
     /// before the real beneficiary ever got a transaction confirmed. Requiring
-    /// `decode(preimage[0..32]) == claimant` makes the reveal useless to
+    /// `preimage[0..32] == sha256(xdr(claimant))` makes the reveal useless to
     /// anyone but the address it commits to.
     ///
     /// This entrypoint works once the will is `Released`: `distribute()`
@@ -5694,24 +5806,20 @@ impl WillContract {
     /// # Parameters
     /// - `will_id`: the will to claim from.
     /// - `claimant`: the address that will receive the funds. Must authorise,
-    ///   and must be the address encoded in the first 32 bytes of `preimage`.
+    ///   and its address fingerprint must match the first 32 bytes of `preimage`.
     /// - `preimage`: raw bytes of exactly [`PREIMAGE_LENGTH`] bytes whose
     ///   SHA-256 must match a stored commitment.
     ///
     /// # Panics
-    /// - [`WillError::WillNotTriggered`] if the will is not `Triggered`.
-    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
-    /// - [`WillError::InvalidPreimage`] if no matching commitment is found, or
-    ///   the pre-image is not prefixed with the XDR encoding of `claimant`.
     /// - [`WillError::WillNotReleased`] if the will is not `Released`.
+    /// - [`WillError::GracePeriodNotExpired`] if the grace period has not elapsed.
     /// - [`WillError::InvalidPreimageLength`] if `preimage` is not exactly
     ///   [`PREIMAGE_LENGTH`] bytes. Checked before hashing, so the empty, short
     ///   or over-long pre-image fails with this error rather than the generic
     ///   [`WillError::InvalidPreimage`] (#370).
     /// - [`WillError::PreimageAddressMismatch`] if the first 32 bytes of
-    ///   `preimage` are not a valid `Address`, or decode to an address other
-    ///   than `claimant` (#369). Checked before hashing, so a stolen pre-image
-    ///   is rejected without ever reaching the commitment lookup.
+    ///   `preimage` do not match `sha256(xdr(claimant))` (#369). Checked before
+    ///   hashing the full pre-image or looking up the commitment.
     /// - [`WillError::InvalidPreimage`] if a correctly-sized pre-image matches no
     ///   stored commitment.
     /// - [`WillError::AlreadyClaimed`] if that slot was already claimed.
@@ -6093,6 +6201,36 @@ fn assert_no_guardian_cancel_in_flight(env: &Env, will: &Will) {
     if will.guardian_cancel_votes > 0 || will.guardian_cancel_vote_weight > 0 {
         panic_with_error!(env, WillError::GuardianCancelInProgress);
     }
+}
+
+/// Validates and applies a check-in, returning whether it updated the will.
+fn record_check_in(env: &Env, will_id: u64, caller: &Address, now: u64) -> bool {
+    let mut will = load_will(env, will_id);
+    assert_status(env, &will, WillStatus::Active, WillError::WillNotActive);
+    assert_owner_or_delegate(env, &will, caller);
+
+    if now < will.last_checkin.saturating_add(MIN_CHECKIN_INTERVAL) {
+        return false;
+    }
+
+    will.last_checkin = now;
+    let next_deadline = checked_add_timestamp(
+        env,
+        now,
+        checked_days_to_seconds(env, will.checkin_period_days),
+    );
+    storage::save_will(env, &will);
+    storage::refresh_owner_index_ttl(env, &will.owner);
+    record_transition(
+        env,
+        will_id,
+        WillStatus::Active,
+        WillStatus::Active,
+        caller,
+        symbol_short!("checkin"),
+    );
+    events::check_in(env, will_id, caller, next_deadline);
+    true
 }
 
 /// Byte length of a SHA-256 digest, i.e. of a `HashedBeneficiary` commitment.
@@ -6882,6 +7020,14 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
     will.balances = hashed_reserves;
     will.balance = will.balances.get(will.token.clone()).unwrap_or(0);
 
+    // A Released will with outstanding hashed reserves is not fully
+    // discharged, so `save_will` below will not renew its TTL. Renew it here
+    // instead (#211): the record is the only thing `reveal_and_claim` can
+    // load to verify a commitment, so leaving it to expire would force
+    // beneficiaries through a state-restore transaction. Fully discharged
+    // records keep terminal rent behaviour.
+    let has_outstanding_claims = unclaimed_hashed_bps(&will.hashed_beneficiaries) > 0;
+
     // Move the will out of its current status bucket (Active or Triggered)
     // into Released, then prune the owner status index since released wills
     // are removed from the owner index entirely (#71).
@@ -6898,6 +7044,9 @@ fn distribute(env: &Env, will: &mut Will, keeper: &Option<Address>) {
 
     storage::unindex_triggered_will(env, will.id);
     storage::save_will(env, will);
+    if has_outstanding_claims {
+        storage::extend_will_ttl(env, will.id);
+    }
 
     // --- INTERACTIONS: external token transfers execute after state is settled ---
     //
@@ -7082,6 +7231,24 @@ fn reset_all_guardians_consent(env: &Env, guardians: &Vec<Guardian>) -> Vec<Guar
         });
     }
     reset
+}
+
+/// Rejects this contract's own address as a participant role (#215).
+///
+/// A beneficiary or guardian equal to `env.current_contract_address()` is
+/// unusable: a beneficiary payout would be a token self-transfer that marks
+/// the allocation paid while the funds never leave the vault, and a guardian
+/// at that address cannot supply an ordinary external signature, so a quorum
+/// including it can never be reached. Other contract addresses are still
+/// accepted -- a distinct contract wallet with a real authorization
+/// implementation is a legitimate participant.
+///
+/// Callers must invoke this before any custody or index mutation so a
+/// rejected list leaves state unchanged.
+fn assert_not_self_address(env: &Env, addr: &Address) {
+    if *addr == env.current_contract_address() {
+        panic_with_error!(env, WillError::InvalidBeneficiary);
+    }
 }
 
 /// Combines two `Allocation`s recorded for the same beneficiary across two
