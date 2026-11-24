@@ -1,24 +1,9 @@
 #!/usr/bin/env bash
+# Integration smoke test for the will contract against a local standalone node.
 #
-# Integration test for the compiled WillContract .wasm artifact.
-#
-# Unlike `cargo test`, which runs the contract logic in-process against
-# soroban_sdk's mock `Env`, this script builds the real wasm binary, deploys
-# it to a local Soroban network, and drives a handful of core lifecycle calls
-# through `stellar contract invoke` — the same code path a real dApp uses.
-# This catches build- or host-environment-specific issues (wasm size limits,
-# host function availability, XDR encoding mismatches) that the fast unit
-# test suite cannot, since it never touches the compiled artifact or a real
-# host.
-#
-# Requirements: `stellar` CLI (>= 22.0.0), `docker` (for the local network),
-# and `jq`.
-#
-# Usage:
-#   ./scripts/integration_test.sh
-#
-# See CONTRIBUTING.md for how to run this locally and what it checks.
-
+# Exercises the full create -> check-in -> cancel lifecycle using the compiled
+# WASM bindings and the installed Stellar CLI. Requires a running standalone
+# node and a pinned Stellar CLI version.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

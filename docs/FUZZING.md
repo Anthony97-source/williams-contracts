@@ -113,7 +113,10 @@ PROPTEST_CASES=5000 cargo test --package will fuzz_test -- --nocapture
 
 A failing case is written to `contracts/will/proptest-regressions/` and replayed
 on every subsequent run. **Commit that file** — it is how a regression stays
-caught.
+caught. The repository's `.gitignore` deliberately does **not** ignore
+`proptest-regressions/` directories (root or nested), so these minimized inputs
+are tracked like any other source file. Only the generated corpora and build
+artifacts (`fuzz/corpus/`, `fuzz/artifacts/`, `target/`) stay ignored.
 
 ## Running cargo-fuzz
 
@@ -243,4 +246,4 @@ overflow would go unnoticed.
 2. Add `fuzz/fuzz_targets/<name>.rs` and a matching `[[bin]]` in
    `fuzz/Cargo.toml`.
 3. Add a `proptest` property in `fuzz_test.rs` driving the same runner, so the
-   new invariants are checked in CI too.
+   new invariants are checked on every PR.
