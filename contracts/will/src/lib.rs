@@ -2678,7 +2678,14 @@ impl WillContract {
         // remain in 1..=new_len — the same invariant enforced at create_will time.
         if !guardians.is_empty() {
             let new_len = guardians.len();
-            if will.guardian_threshold > new_len {
+            // Issue #182: enabling a committee from an empty list must pick a
+            // positive threshold. Leaving 0 would let the first guardian vote
+            // satisfy quorum on its own, contradicting the documented
+            // 1..=total_weight invariant. Unweighted lists default to a simple
+            // majority so a single guardian cannot act alone.
+            if will.guardian_threshold == 0 {
+                will.guardian_threshold = new_len / 2 + 1;
+            } else if will.guardian_threshold > new_len {
                 panic_with_error!(&env, WillError::InvalidGuardianThreshold);
             }
         }
@@ -2979,8 +2986,13 @@ impl WillContract {
 
             // Same threshold invariant enforced in update_guardians: a non-empty
             // new list must not leave the existing guardian_threshold unreachable.
-            if !new_guardians.is_empty() && will.guardian_threshold > new_guardians.len() {
-                panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+            if !new_guardians.is_empty() {
+                // Issue #182: same enablement policy as `update_guardians`.
+                if will.guardian_threshold == 0 {
+                    will.guardian_threshold = new_guardians.len() / 2 + 1;
+                } else if will.guardian_threshold > new_guardians.len() {
+                    panic_with_error!(&env, WillError::InvalidGuardianThreshold);
+                }
             }
 
             let now = env.ledger().timestamp();
