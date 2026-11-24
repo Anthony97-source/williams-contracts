@@ -1338,6 +1338,7 @@ impl WillContract {
             will.guardian_vote_weight = 0;
             will.guardian_votes = 0;
 
+            storage::remove_owner_status_index(&env, &owner, prior_status, will_id);
             storage::remove_owner_index(&env, &owner, will_id);
             for beneficiary in will.beneficiaries.iter() {
                 storage::remove_beneficiary_index(&env, &beneficiary.address, will_id);
