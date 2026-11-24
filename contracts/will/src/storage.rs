@@ -402,6 +402,27 @@ pub fn is_live_status(status: WillStatus) -> bool {
     )
 }
 
+/// Reads a `DataKey::Will` entry through the schema-compatible decoder.
+///
+/// Every read of a will entry in this module goes through here so a legacy
+/// layout is decoded into the current `Will` shape before use (issue #177).
+/// A missing key stays `None`; a present key that matches no known layout
+/// panics with `UnsupportedSchemaVersion` instead of being silently skipped
+/// or converted into a bogus "not found".
+fn decode_will_entry(env: &Env, id: u64) -> Option<Will> {
+    let raw: Option<Val> = env
+        .storage()
+        .persistent()
+        .get(&DataKey::Will(id));
+    match raw {
+        None => None,
+        Some(raw) => match migration::decode_will(env, &raw) {
+            Ok(will) => Some(will),
+            Err(err) => panic_with_error!(env, err),
+        },
+    }
+}
+
 /// Recomputes protocol statistics across a bounded range of will IDs: `[start_id, start_id + batch_size)`.
 ///
 /// Returns `(chunk_stats, next_id, is_complete)`:
@@ -442,11 +463,7 @@ pub fn recompute_protocol_stats_chunk(
     let mut id = start_id;
 
     while id <= end_id {
-        if let Some(will) = env
-            .storage()
-            .persistent()
-            .get::<_, Will>(&DataKey::Will(id))
-        {
+        if let Some(will) = decode_will_entry(env, id) {
             if is_live_status(will.status) {
                 active_will_count += 1;
                 for (token, amount) in will.balances.iter() {
@@ -503,11 +520,7 @@ pub fn recompute_protocol_stats(env: &Env) -> ProtocolStats {
     let mut totals: Map<Address, i128> = Map::new(env);
     let mut id = 1u64;
     while id <= last_id {
-        if let Some(will) = env
-            .storage()
-            .persistent()
-            .get::<_, Will>(&DataKey::Will(id))
-        {
+        if let Some(will) = decode_will_entry(env, id) {
             if is_live_status(will.status) {
                 active_will_count += 1;
                 for (token, amount) in will.balances.iter() {
@@ -573,11 +586,7 @@ pub fn compare_protocol_stats(
     let mut computed_totals: Map<Address, i128> = Map::new(env);
     let mut id = 1u64;
     while id <= last_id {
-        if let Some(will) = env
-            .storage()
-            .persistent()
-            .get::<_, Will>(&DataKey::Will(id))
-        {
+        if let Some(will) = decode_will_entry(env, id) {
             if is_live_status(will.status) {
                 computed_active += 1;
                 for (token, amount) in will.balances.iter() {
@@ -630,7 +639,7 @@ pub fn compare_protocol_stats(
 /// it just stops being renewed.
 pub fn save_will(env: &Env, will: &Will) {
     let key = DataKey::Will(will.id);
-    if let Some(previous) = env.storage().persistent().get::<_, Will>(&key) {
+    if let Some(previous) = decode_will_entry(env, will.id) {
         for guardian in previous.guardians.iter() {
             let address = guardian.address.clone();
             let mut still_guardian = false;
@@ -819,11 +828,7 @@ fn trim_stale_beneficiary_index(env: &Env, beneficiary: &Address) {
     let mut found_stale = false;
 
     for id in ids.iter() {
-        let is_live = match env
-            .storage()
-            .persistent()
-            .get::<_, Will>(&DataKey::Will(id))
-        {
+        let is_live = match decode_will_entry(env, id) {
             // Will entry is present: keep it only if it is in a non-terminal
             // (live) state.
             Some(will) => is_live_status(will.status),
