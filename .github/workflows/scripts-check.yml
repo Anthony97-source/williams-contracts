@@ -34,6 +34,10 @@ jobs:
           bash -n scripts/export-spec.sh
           bash -n scripts/check_resource_costs.sh
           bash -n scripts/check-wasm-size.sh
+          bash -n scripts/check-testnet-drift.sh
+
+      - name: Check README function table matches lib.rs (#235)
+        run: python3 scripts/gen-api-table.py --check
 
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -64,7 +68,7 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install stellar-cli
-        run: cargo install --locked stellar-cli
+        run: cargo install --locked stellar-cli --version 22.0.1
 
       - name: Run deploy sandbox smoke-test
         run: scripts/run-deploy-sandbox.sh
@@ -85,7 +89,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Install stellar-cli
-        run: cargo install --locked stellar-cli
+        run: cargo install --locked stellar-cli --version 22.0.1
 
       - name: Build contract and verify spec freshness
         run: scripts/export-spec.sh --check
