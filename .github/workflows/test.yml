@@ -48,6 +48,18 @@ jobs:
       - name: Run tests
         run: cargo test --all
 
+  fuzzing-feature-check:
+    name: Fuzzing Feature Compile Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile optional fuzzing feature on host target
+        run: cargo check -p will --features fuzzing --locked
+      - name: Verify guard catches broken feature-only derive
+        run: bash scripts/check-fuzzing-feature-guard.sh
+
   build-wasm:
     name: Build & Verify WASM Size
     runs-on: ubuntu-latest
