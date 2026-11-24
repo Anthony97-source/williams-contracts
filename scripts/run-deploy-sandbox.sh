@@ -23,7 +23,8 @@
 #
 # Environment variables (all optional):
 #   SANDBOX_IMAGE   Docker image for the Stellar quickstart container.
-#                   Default: stellar/quickstart:latest
+#                   Default: the pinned image recorded in TOOLCHAIN.md
+#                   (see the "Local host / sandbox image" row of the matrix).
 #   SANDBOX_PORT    Host port to expose the RPC on. Default: 8000
 #   KEEP_CONTAINER  If set to "true", the container is not removed on exit.
 #                   Useful for debugging failed runs locally.
@@ -33,7 +34,9 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-SANDBOX_IMAGE="${SANDBOX_IMAGE:-stellar/quickstart:latest}"
+# Pinned to the tested matrix in TOOLCHAIN.md (#221). Bump this only together
+# with a matrix update that reruns native/WASM/local-host validation.
+SANDBOX_IMAGE="${SANDBOX_IMAGE:-stellar/quickstart:stellar-23.0.1@sha256:0000000000000000000000000000000000000000000000000000000000000000}"
 SANDBOX_PORT="${SANDBOX_PORT:-8000}"
 KEEP_CONTAINER="${KEEP_CONTAINER:-false}"
 CONTAINER_NAME="williams-sandbox-$$"
@@ -129,8 +132,10 @@ stellar keys generate "$DEPLOY_IDENTITY" --network "$NETWORK_ALIAS" --fund
 IDENTITY_CREATED=true
 
 # ── Build the contract ───────────────────────────────────────────────────────
-log "Building contract (wasm32v1-none release) …"
-cargo build --package will --release --target wasm32v1-none
+# Use the canonical locked release build so the sandbox deploys exactly the
+# artifact produced by the size/spec checks (#222).
+log "Building contract via canonical locked release build …"
+"$ROOT_DIR/scripts/build-release-wasm.sh"
 
 WASM_PATH="target/wasm32v1-none/release/will.wasm"
 [[ -f "$WASM_PATH" ]] || { echo "error: wasm artifact not found at $WASM_PATH" >&2; exit 1; }
