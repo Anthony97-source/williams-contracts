@@ -7,13 +7,13 @@
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::Client as TokenClient,
-    vec, Address, Env,
+    vec, Address, Env, Vec,
 };
 
 use crate::{
     issue_18_test::{FailableToken, FailableTokenClient},
-    storage, Allocation, Beneficiary, FailedPayoutRequest, WillContract,
-    WillContractClient, WillError,
+    storage, Allocation, Beneficiary, FailedPayoutRequest, WillContract, WillContractClient,
+    WillError,
 };
 
 const DAY: u64 = 86_400;
@@ -25,17 +25,16 @@ fn advance(env: &Env, days: u64) {
 /// Creates a will funded with `amount` of a failable token, triggers it, and
 /// releases so `distribute` records one failed payout of `amount` for
 /// `beneficiary`. Returns `(will_id, token_id)`.
-fn make_failed_payout<'a>(
+fn make_failed_payout(
     env: &Env,
     owner: &Address,
     beneficiary: &Address,
     amount: i128,
-    client: &WillContractClient<'a>,
+    client: &WillContractClient<'_>,
 ) -> (u64, Address) {
     let token_id = env.register(FailableToken, ());
-    let token_client = FailableTokenClient::new(&env, &token_id);
-    token_client.mint(owner, amount);
-    token_client.set_fail_all(&true);
+    let token_client = FailableTokenClient::new(env, &token_id);
+    token_client.mint(owner, &amount);
 
     let will_id = client.create_will(
         owner,
@@ -58,6 +57,7 @@ fn make_failed_payout<'a>(
     advance(env, 91);
     client.trigger_will(&will_id);
     advance(env, 8);
+    token_client.set_fail_all(&true);
     client.release_inheritance(&will_id, &None);
     token_client.set_fail_all(&false);
 
@@ -84,13 +84,14 @@ fn batch_retry_clears_all_recorded_failed_payouts() {
 
     let mut i: u32 = 0;
     while i < COUNT {
-        let (will_id, token_id) = make_failed_payout(
-            &env, &owner, &beneficiary, AMOUNT, &client,
-        );
+        let (will_id, token_id) = make_failed_payout(&env, &owner, &beneficiary, AMOUNT, &client);
         // Precondition: each distribute recorded a failed payout.
         assert_eq!(
             env.as_contract(&contract_id, || storage::get_failed_payout(
-                &env, will_id, &token_id, &beneficiary
+                &env,
+                will_id,
+                &token_id,
+                &beneficiary
             )),
             Some(AMOUNT),
             "precondition: distribute must record each failed payout"
@@ -108,13 +109,20 @@ fn batch_retry_clears_all_recorded_failed_payouts() {
     let succeeded = client.batch_retry_failed_payouts(&requests);
 
     // All five retries succeeded.
-    assert_eq!(succeeded.len(), COUNT, "every recorded payout should be retried");
+    assert_eq!(
+        succeeded.len(),
+        COUNT,
+        "every recorded payout should be retried"
+    );
     for request in requests.iter() {
-        assert!(succeeded.iter().any(|s| {
-            s.will_id == request.will_id
-                && s.token == request.token
-                && s.recipient == request.recipient
-        }), "succeeded list must contain {request:?}");
+        assert!(
+            succeeded.iter().any(|s| {
+                s.will_id == request.will_id
+                    && s.token == request.token
+                    && s.recipient == request.recipient
+            }),
+            "succeeded list must contain {request:?}"
+        );
     }
 
     // Every failed-payout record is cleared from storage.
@@ -157,9 +165,7 @@ fn batch_retry_skips_requests_without_a_recorded_payout() {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    let (will_id, token_id) = make_failed_payout(
-        &env, &owner, &beneficiary, 500_000, &client,
-    );
+    let (will_id, token_id) = make_failed_payout(&env, &owner, &beneficiary, 500_000, &client);
 
     // One real request plus one request for a tuple that was never recorded.
     let stranger = Address::generate(&env);
@@ -181,7 +187,10 @@ fn batch_retry_skips_requests_without_a_recorded_payout() {
     assert_eq!(succeeded.len(), 1);
     assert_eq!(
         env.as_contract(&contract_id, || storage::get_failed_payout(
-            &env, will_id, &token_id, &beneficiary
+            &env,
+            will_id,
+            &token_id,
+            &beneficiary
         )),
         None,
         "recorded payout must be cleared"
@@ -199,9 +208,7 @@ fn batch_retry_rejects_oversized_batch() {
     let contract_id = env.register(WillContract, ());
     let client = WillContractClient::new(&env, &contract_id);
 
-    let (will_id, token_id) = make_failed_payout(
-        &env, &owner, &beneficiary, 500_000, &client,
-    );
+    let (will_id, token_id) = make_failed_payout(&env, &owner, &beneficiary, 500_000, &client);
 
     let mut oversized: Vec<FailedPayoutRequest> = Vec::new(&env);
     for _ in 0..11 {

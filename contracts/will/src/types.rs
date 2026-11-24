@@ -478,6 +478,40 @@ pub enum GuardianVoteReason {
     Other = 3,
 }
 
+/// Public status of a guardian's vote to **cancel** the current trigger
+/// (issue #214).
+///
+/// This is the cancellation counterpart of the trigger-vote inspection
+/// returned by `get_guardian_vote_status`, and is deliberately a distinct
+/// type so a caller can never confuse a release vote with a cancel vote.
+/// It is read-only: querying it requires no authorization and mutates no
+/// state.
+///
+/// A vote only counts toward the live cancellation tally while it is
+/// unexpired and the guardian is still on the will's guardian list with
+/// `GuardianConsent::Accepted` consent — exactly the rules
+/// `recount_guardian_cancel_votes` applies. `has_voted` reports whether a
+/// record exists at all; `is_live` reports whether that record currently
+/// counts toward quorum.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GuardianCancelVoteStatus {
+    /// Whether the guardian has a stored cancellation vote record for the
+    /// current trigger cycle, live or expired.
+    pub has_voted: bool,
+    /// Whether the stored vote is currently counted toward the cancellation
+    /// quorum (unexpired, guardian still listed and accepted).
+    pub is_live: bool,
+    /// Unix timestamp (seconds) at which the stored vote was cast, if any.
+    pub voted_at: Option<u64>,
+    /// Unix timestamp (seconds) at which the stored vote expires, if any.
+    /// `None` when no vote record exists.
+    pub expires_at: Option<u64>,
+    /// The guardian's vote weight as currently configured on the will, or 0
+    /// if the guardian is no longer listed.
+    pub weight: u32,
+}
+
 /// A single entry in a will's on-chain audit trail, recording one status
 /// transition. The full history of a will can be reconstructed by reading
 /// all entries in insertion order.

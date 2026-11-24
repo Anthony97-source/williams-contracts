@@ -41,8 +41,8 @@ wasm_path="target/wasm32v1-none/release/will.wasm"
 out_path="spec/will-v${version}.json"
 stellar_bin="${STELLAR_BIN:-stellar}"
 
-echo "Building will contract (release, wasm32v1-none)..."
-SOROBAN_SDK_BUILD_SYSTEM_SUPPORTS_SPEC_SHAKING_V2=1 cargo build -p will --release --target wasm32v1-none
+echo "Building will contract (canonical locked release build)..."
+"${repo_root}/scripts/build-wasm.sh" will
 
 if [[ "${check_mode}" -eq 0 ]]; then
   echo "Exporting spec to ${out_path}..."

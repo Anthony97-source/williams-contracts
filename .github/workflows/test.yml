@@ -6,14 +6,20 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # Pinned Rust toolchain from the tested version matrix (see docs/toolchain-matrix.md).
+  # Update this together with the matrix and rerun native/WASM/local-host validation.
+  RUST_TOOLCHAIN: "1.84.0"
+
 jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: rustfmt
       - name: Check formatting
         run: cargo fmt --check
@@ -23,8 +29,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
@@ -43,18 +50,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --all
+
+  fuzzing-feature-check:
+    name: Fuzzing Feature Compile Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Compile optional fuzzing feature on host target
+        run: cargo check -p will --features fuzzing --locked
+      - name: Verify guard catches broken feature-only derive
+        run: bash scripts/check-fuzzing-feature-guard.sh
 
   build-wasm:
     name: Build & Verify WASM Size
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32v1-none
       - uses: Swatinem/rust-cache@v2
       - name: Build contract & verify binary size
