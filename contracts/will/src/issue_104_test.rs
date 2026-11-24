@@ -102,6 +102,7 @@ fn cooldown_expires_after_24_hours() {
     let will_id = create_will(&env, &client, &owner, &token_address, &heir);
 
     trigger_will(&env, &client, will_id);
+    let checkin_at = env.ledger().timestamp();
     client.emergency_checkin(&will_id, &owner);
 
     // Make the inactivity deadline due independently of the cooldown.
