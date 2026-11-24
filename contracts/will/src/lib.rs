@@ -3,6 +3,9 @@
 // in), so `std` is linked only for those configurations. The wasm build,
 // which sees neither `cfg(test)` nor the `fuzzing` feature, stays `no_std`.
 #![cfg_attr(not(any(test, feature = "fuzzing")), no_std)]
+// Prevent accidental enabling of the `fuzzing` feature on wasm builds.
+#[cfg(all(target_arch = "wasm32", feature = "fuzzing"))]
+compile_error!("The `fuzzing` feature must not be enabled for wasm builds.");
 // `create_will` legitimately needs more than clippy's default 7-argument
 // threshold (token/beneficiary/period/guardian/bounty/confirmation config
 // all belong at creation time). `#[contractimpl]`'s generated dispatch code

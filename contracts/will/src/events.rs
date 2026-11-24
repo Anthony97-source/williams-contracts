@@ -552,14 +552,12 @@ pub fn payout_redirected(
 /// Topics: `("portmig", old_owner)`.
 /// Data: `new_owner` — the address that now holds the migrated indexes.
 ///
-/// Emitted by `WillContract::migrate_owner_portfolio` after both
-/// `DataKey::OwnerWills` and all `DataKey::OwnerStatusWills` buckets have
-/// been transferred and the old keys have been pruned.  Off-chain indexers can
-/// use this event to update identity mappings without re-scanning every will.
-pub fn owner_portfolio_migrated(env: &Env, old_owner: &Address, new_owner: &Address) {
+/// This allows off‑chain indexers to differentiate a simple status reset from a
+/// fresh acceptance, which is required for correct consent‑dashboard behavior.
+pub fn guardian_reappointed_role(env: &Env, will_id: u64, guardian: &Address) {
     env.events().publish(
-        (symbol_short!("portmig"), old_owner.clone()),
-        new_owner.clone(),
+        (symbol_short!("guardian_reappointed"), will_id),
+        (guardian,),
     );
 }
 
