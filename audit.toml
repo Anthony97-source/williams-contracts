@@ -1,5 +1,11 @@
 # Configuration for `cargo audit` (see .github/workflows/audit.yml).
 #
+# This file is loaded EXPLICITLY via `cargo audit --config audit.toml` by both
+# the CI workflow (.github/workflows/audit.yml) and the justfile `audit`
+# recipe. Do not rely on cargo-audit's default search paths (e.g.
+# .cargo/audit.toml or the user cargo directory), which could silently pick up
+# unrelated machine-level settings or ignore this repository configuration.
+#
 # Advisories that have been triaged and judged not to apply to this crate's
 # usage can be allow-listed here. Every entry MUST carry a comment explaining
 # why it's safe to ignore and, ideally, a link to the tracking issue for the
