@@ -371,15 +371,14 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
-    /// The rent-maintenance entry point for released hashed reserves was
-    /// called on a will that has no outstanding claims left to protect.
+    /// `retry_owner_refund` was called for a `(will_id, token)` pair with no
+    /// recorded deferred owner refund — either the token was never deferred
+    /// (it transferred successfully during cancellation), it was already
+    /// recovered, or the will is not in a cancelled/refunded state (#213).
     ///
-    /// A `Released` will keeps its persistent storage entry alive only while
-    /// at least one hashed beneficiary commitment is still unclaimed, because
-    /// `reveal_and_claim` needs that entry to verify the commitment. Once
-    /// every slot has been claimed (or the will never had any hashed
-    /// beneficiaries), the record is fully discharged: it retains terminal
-    /// rent behaviour and cannot be kept alive indefinitely by calling the
-    /// keepalive again (#211).
-    NoOutstandingClaims = 59,
+    /// Owner refunds now use the same deferred-delivery model as beneficiary
+    /// payouts: a token that refuses transfer during `cancel_will`,
+    /// `refund_unconfirmed_will` or `guardian_cancel_pending_will` is recorded
+    /// as a recoverable liability instead of rolling back the whole refund.
+    NoDeferredOwnerRefund = 59,
 }

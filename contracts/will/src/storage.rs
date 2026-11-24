@@ -1271,6 +1271,37 @@ pub fn reset_guardian_votes(env: &Env, will: &Will) {
     }
 }
 
+/// Returns the timestamp of `guardian`'s cancel-trigger vote for `will_id`
+/// when that vote is still live at `now`, or `None` otherwise.
+///
+/// This is the read-only counterpart of [`has_guardian_cancel_voted`] and
+/// uses exactly the same liveness rule: the record must exist, must not be
+/// timestamped after `now`, and must satisfy [`vote_is_live`]. It therefore
+/// agrees with [`recount_guardian_cancel_votes`] about which votes count
+/// toward the cancel quorum, while additionally reporting *when* the vote was
+/// cast so recovery dashboards can show its remaining validity (#214).
+///
+/// Unlike the recount helpers this never mutates storage: an expired record is
+/// reported as `None` but left in place for the next recount pass to drop.
+pub fn get_guardian_cancel_vote(
+    env: &Env,
+    will_id: u64,
+    guardian: &Address,
+    now: u64,
+    expiry_days: u64,
+) -> Option<u64> {
+    let key = DataKey::GuardianCancelVote(will_id, guardian.clone());
+    let record = env
+        .storage()
+        .persistent()
+        .get::<_, GuardianVoteRecord>(&key)?;
+    if now >= record.timestamp && vote_is_live(now, record.timestamp, expiry_days) {
+        Some(record.timestamp)
+    } else {
+        None
+    }
+}
+
 /// Returns whether `guardian` has a non-expired cancel vote in the current
 /// cycle for `will_id`.
 ///
@@ -1795,6 +1826,47 @@ pub fn get_failed_payout(
 pub fn remove_failed_payout(env: &Env, will_id: u64, token: &Address, recipient: &Address) {
     let key = DataKey::FailedPayout(will_id, token.clone(), recipient.clone());
     env.storage().persistent().remove(&key);
+}
+
+/// Records a deferred **owner refund** for `(will_id, token, owner)` (#213).
+///
+/// Owner-refund paths (`cancel_will`, `refund_unconfirmed_will`,
+/// `guardian_cancel_pending_will`) use the same `FailedPayout` ledger as
+/// beneficiary distributions so that one unavailable token cannot roll back
+/// the refunds of every other token: the transfer is attempted, and on
+/// failure the outstanding amount is recorded here instead of panicking.
+///
+/// The record is keyed by the will id, token and the owner as recipient, so
+/// it is exactly-once recoverable through the existing
+/// `retry_failed_payout` / [`get_failed_payout`] / [`remove_failed_payout`]
+/// machinery — a retry delivers the amount and clears the record, and a
+/// second retry finds nothing left to pay.
+///
+/// Amounts are **accumulated** rather than overwritten: if a refund for the
+/// same tuple is deferred more than once (for example a partially delivered
+/// refund followed by another failure), the recorded liability is the sum of
+/// everything still owed, never just the latest attempt.
+pub fn record_failed_owner_refund(
+    env: &Env,
+    will_id: u64,
+    token: &Address,
+    owner: &Address,
+    amount: i128,
+) {
+    if amount <= 0 {
+        return;
+    }
+    let key = DataKey::FailedPayout(will_id, token.clone(), owner.clone());
+    let outstanding: i128 = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(0)
+        .saturating_add(amount);
+    env.storage().persistent().set(&key, &outstanding);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, LIFETIME_THRESHOLD, BUMP_AMOUNT);
 }
 
 /// Migrates the complete owner portfolio from `old_owner` to `new_owner`.
