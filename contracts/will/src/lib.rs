@@ -219,6 +219,13 @@ mod issue_500_test;
 #[cfg(test)]
 mod issue_41_test;
 
+/// Tests for ADR 0003: TotalLocked TTL maintenance policy. Verifies that
+/// `check_in`, `emergency_checkin`, and `batch_check_in` refresh the TTL of
+/// `TotalLocked(token)` entries so that active token aggregates do not expire
+/// to network archival while wills remain active.
+#[cfg(test)]
+mod total_locked_ttl_maintenance_test;
+
 /// Regression test for issue #184: `merge_wills` refuses mismatched primary tokens.
 #[cfg(test)]
 mod issue_184_test;
@@ -1411,6 +1418,14 @@ impl WillContract {
         // create_will (#41).
         storage::refresh_owner_index_ttl(&env, &will.owner);
 
+        // Refresh TTL on the per-token aggregate entries (`TotalLocked(token)`) for every token
+        // the will holds. These aggregates are normally only refreshed when their values change
+        // (via `adjust_locked_value`), so a long-lived will with stable balances could see its
+        // token aggregates expire to network archival independently of the will itself. This
+        // keepalive ensures that active wills keep their token aggregates alive as long as the
+        // will remains active, with bounded cost (O(N) in token count, capped at MAX_TOKENS).
+        storage::refresh_total_locked_ttl_for_balances(&env, &will.balances);
+
         // Record the check-in in the same audit trail status transitions use
         // (#500). `status` does not change, so this is a same-status entry
         // (`Active` -> `Active`); what matters is that every event that moves
@@ -1577,6 +1592,10 @@ impl WillContract {
             );
 
             events::check_in(&env, will_id, &caller, next_deadline);
+
+            // Refresh TTL on the per-token aggregate entries (`TotalLocked(token)`) for every token
+            // the will holds, just as in the single-will `check_in` path.
+            storage::refresh_total_locked_ttl_for_balances(&env, &will.balances);
         }
 
         events::batch_checkin(&env, &caller, &will_ids, count);
@@ -1746,6 +1765,12 @@ impl WillContract {
         );
         events::emergency_checkin(&env, will_id, &owner, next_deadline);
         storage::bump_instance_ttl(&env);
+
+        // Refresh TTL on the per-token aggregate entries (`TotalLocked(token)`) for every token
+        // the will holds, just as in `check_in`. The emergency check-in brings the will back to
+        // `Active` status and extends the check-in countdown, so its token aggregates should
+        // be kept alive to maintain consistency with the will's active state.
+        storage::refresh_total_locked_ttl_for_balances(&env, &will.balances);
     }
 
     /// Requests a temporary grace period extension during `Triggered` state
