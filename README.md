@@ -490,3 +490,15 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 <!-- handsoff-issue-68 -->
 - #68: Guardian Consent Status Survives Unchecked Across Guardian Weight Updates
+
+<!-- handsoff-issue-187 -->
+- #187: Allow hashed claims after guardian release without waiting for inactivity deadlines
+
+<!-- handsoff-issue-188 -->
+- #188: Avoid the overflowing multiplication in hashed pool share calculation
+
+<!-- handsoff-issue-189 -->
+- #189: Keep hashed claim payouts from subtracting already removed protocol totals
+
+<!-- handsoff-issue-190 -->
+- #190: Define an allocation-preserving policy for merges with different token portfolios
