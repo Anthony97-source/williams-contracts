@@ -550,3 +550,24 @@ pub fn owner_portfolio_migrated(env: &Env, old_owner: &Address, new_owner: &Addr
         new_owner.clone(),
     );
 }
+
+/// Published when a live `Released` will's storage TTL is renewed because it
+/// still holds outstanding hashed claim reserves (issue #211).
+///
+/// Topics: `("keepalive", will_id)`.
+/// Data: `(timestamp, remaining_unclaimed_bps)` where `timestamp` is the
+/// ledger time of the renewal and `remaining_unclaimed_bps` is the total
+/// allocation (in basis points) still claimable by unrevealed hashed
+/// beneficiaries at that moment.
+///
+/// This is a rent-maintenance signal only: it never changes entitlements,
+/// beneficiary permissions or the will's status. Fully discharged records
+/// (no outstanding hashed reserves) are not kept alive and never emit this
+/// event, so terminal rent behaviour is preserved. The payload is fixed-size
+/// and bounded regardless of how many hashed reserves remain.
+pub fn will_keepalive(env: &Env, will_id: u64, timestamp: u64, remaining_unclaimed_bps: u32) {
+    env.events().publish(
+        (symbol_short!("keepalive"), will_id),
+        (timestamp, remaining_unclaimed_bps),
+    );
+}

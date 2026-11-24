@@ -43,6 +43,7 @@ data, in order.
 | `payfail` | `distribute`, `reveal_and_claim`, `cancel_will`, `refund_unconfirmed_will`, `guardian_cancel_pending_will` (failed transfer) | `(token: Address, recipient: Address, amount: i128)` |
 | `payretry` | `retry_failed_payout` | `(token: Address, recipient: Address, amount: i128)` |
 | `payredir` | `redirect_failed_payout` | `(token: Address, old_recipient: Address, new_recipient: Address, amount: i128)` |
+| `keepalive` | `keepalive_claim_reserve` | `(caller: Address, new_ttl: u32)` |
 
 ## `archived`
 
