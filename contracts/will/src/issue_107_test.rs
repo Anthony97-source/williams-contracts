@@ -144,3 +144,169 @@ fn retry_failed_payout_emits_event_with_resolution_context() {
     }
     assert!(found_payretry, "expected a payretry event after successful retry");
 }
+
+#[test]
+fn get_failed_payout_amount_reports_exact_tuple_amount() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (will_id, token_id) = make_failed_payout(
+        &env, &owner, &beneficiary, 500_000, &client,
+    );
+
+    // After recording, the exact tuple reports its current amount.
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        Some(500_000),
+        "recorded failed payout must report its exact amount"
+    );
+
+    // A tuple that was never recorded reports an empty result.
+    let other = Address::generate(&env);
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &other),
+        None,
+        "unknown tuple must report an empty result"
+    );
+}
+
+#[test]
+fn get_failed_payout_amount_is_empty_before_failure() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let token_id = env.register(FailableToken, ());
+    let failable = FailableTokenClient::new(&env, &token_id);
+    failable.mint(&owner, &500_000);
+
+    let will_id = client.create_will(
+        &owner,
+        &vec![&env, (token_id.clone(), 500_000)],
+        &vec![
+            &env,
+            Beneficiary {
+                address: beneficiary.clone(),
+                allocation: Allocation::Percentage(10_000),
+            },
+        ],
+        &90,
+        &7,
+        &vec![&env],
+        &0,
+        &None,
+        &0,
+    );
+
+    // No failure has occurred yet, so the query is empty and non-mutating.
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        None,
+        "query before failure must report an empty result"
+    );
+}
+
+#[test]
+fn get_failed_payout_amount_is_empty_after_successful_retry() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (will_id, token_id) = make_failed_payout(
+        &env, &owner, &beneficiary, 500_000, &client,
+    );
+
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        Some(500_000),
+        "precondition: failed payout is recorded"
+    );
+
+    client.retry_failed_payout(&will_id, &token_id, &beneficiary);
+
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        None,
+        "resolved tuple must report an empty result after retry"
+    );
+}
+
+#[test]
+fn get_failed_payout_amount_tracks_redirection() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let redirect_to = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (will_id, token_id) = make_failed_payout(
+        &env, &owner, &beneficiary, 500_000, &client,
+    );
+
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        Some(500_000),
+        "precondition: failed payout is recorded"
+    );
+
+    client.redirect_failed_payout(&will_id, &token_id, &beneficiary, &redirect_to);
+
+    // The original tuple is resolved and reports an empty result.
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        None,
+        "redirected-away tuple must report an empty result"
+    );
+
+    // The redirected tuple reports the outstanding amount.
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &redirect_to),
+        Some(500_000),
+        "redirected tuple must report the outstanding amount"
+    );
+}
+
+#[test]
+fn get_failed_payout_amount_works_after_parent_archival() {
+    let env = Env::default();
+    env.mock_all_auths();
+    env.ledger().set_timestamp(1_700_000_000);
+
+    let owner = Address::generate(&env);
+    let beneficiary = Address::generate(&env);
+    let contract_id = env.register(WillContract, ());
+    let client = WillContractClient::new(&env, &contract_id);
+
+    let (will_id, token_id) = make_failed_payout(
+        &env, &owner, &beneficiary, 500_000, &client,
+    );
+
+    // Advance past the archival window so the parent will is archived.
+    advance(&env, 400);
+
+    assert_eq!(
+        client.get_failed_payout_amount(&will_id, &token_id, &beneficiary),
+        Some(500_000),
+        "failed-payout record must outlive parent-will archival"
+    );
+}

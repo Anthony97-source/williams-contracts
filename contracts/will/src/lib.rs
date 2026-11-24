@@ -1974,6 +1974,33 @@ impl WillContract {
     ///   already retried successfully, or the arguments don't match).
     /// - Propagates the token contract's own panic if this attempt also
     ///   fails; the record is left in place for a future retry.
+    /// Returns the amount of an exact failed-payout tuple
+    /// `(will_id, token, beneficiary)` that is still outstanding, or `None`
+    /// when there is nothing left to pay.
+    ///
+    /// Failed payouts are recorded by [`pay_or_record_failure`] whenever a
+    /// token transfer is refused during distribution or an owner refund, and
+    /// are cleared once the tuple is settled through
+    /// [`retry_failed_payout`] or [`redirect_failed_payout`]. This getter is
+    /// the authoritative, non-mutating way for recovery UIs to tell the two
+    /// cases apart: `None` means the tuple is unknown **or** already
+    /// resolved, `Some(amount)` means exactly `amount` is still owed.
+    ///
+    /// The record is independent of the parent will's lifecycle: it is
+    /// looked up in the live namespace first and falls back to the archived
+    /// one, so the query keeps working after the will has been archived, and
+    /// it reflects the current amount after a redirection or a retry.
+    ///
+    /// Requires no authorization and mutates no state.
+    pub fn get_failed_payout_amount(
+        env: Env,
+        will_id: u64,
+        token: Address,
+        beneficiary: Address,
+    ) -> Option<i128> {
+        storage::get_failed_payout(&env, will_id, &token, &beneficiary)
+    }
+
     pub fn retry_failed_payout(env: Env, will_id: u64, token: Address, recipient: Address) {
         let amount = match storage::get_failed_payout(&env, will_id, &token, &recipient) {
             Some(amount) => amount,
@@ -3853,6 +3880,56 @@ impl WillContract {
     /// - [`WillError::NotGuardian`] if `guardian` is not one of the will's guardians.
     /// - [`WillError::AlreadyVoted`] if `guardian` already cast a cancel vote in this cycle.
     /// - [`WillError::GuardianCooldownActive`] if the guardian-list cooldown has not elapsed.
+    /// Returns the timestamp of `guardian`'s live **cancel** vote on
+    /// `will_id`, or `None` when there is no vote that currently counts
+    /// toward the cancellation quorum.
+    ///
+    /// This is the read-only counterpart of [`guardian_cancel_trigger`] and
+    /// is deliberately distinct from [`get_guardian_vote_status`] /
+    /// [`get_guardian_votes`], which report *trigger* (release) votes: the
+    /// two namespaces are independent, so a guardian can hold a live vote in
+    /// one and not the other.
+    ///
+    /// The result applies exactly the same rules as
+    /// `storage::recount_guardian_cancel_votes` / `has_guardian_cancel_voted`:
+    ///
+    /// - `None` when the guardian never voted, when their vote has expired
+    ///   (older than the will's `grace_period_days`), when the vote was
+    ///   withdrawn (e.g. via [`reject_guardian_role`]), or when the guardian
+    ///   is no longer a consented member of the will's guardian list.
+    /// - `Some(timestamp)` with the ledger timestamp the vote was cast at
+    ///   otherwise.
+    ///
+    /// Requires no authorization and mutates no state, so recovery
+    /// dashboards can poll it freely.
+    ///
+    /// # Panics
+    /// - [`WillError::WillNotFound`] if the will does not exist.
+    pub fn get_guardian_cancel_vote_status(
+        env: Env,
+        will_id: u64,
+        guardian: Address,
+    ) -> Option<u64> {
+        let will = load_will(&env, will_id);
+        let now = env.ledger().timestamp();
+        let expiry_days = will.grace_period_days;
+
+        // Only current, consented guardians can contribute to quorum, so a
+        // vote from anyone else is reported as absent (#453).
+        let consented = will
+            .guardians
+            .iter()
+            .any(|g| g.address == guardian && g.consent == GuardianConsent::Accepted);
+        if !consented {
+            return None;
+        }
+
+        if !storage::has_guardian_cancel_voted(&env, will_id, &guardian, now, expiry_days) {
+            return None;
+        }
+        storage::get_guardian_cancel_vote(&env, will_id, &guardian)
+    }
+
     pub fn guardian_cancel_trigger(env: Env, will_id: u64, guardian: Address) {
         guardian.require_auth();
         let mut will = load_will(&env, will_id);
