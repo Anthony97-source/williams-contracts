@@ -1667,7 +1667,7 @@ pub fn get_history(env: &Env, will_id: u64) -> Vec<WillStatusTransition> {
 pub fn paginate_history(
     env: &Env,
     will_id: u64,
-    cursor: Option<u32>,
+    cursor: Option<u64>,
     limit: u32,
 ) -> Vec<WillStatusTransition> {
     let history = get_history(env, will_id);
@@ -1681,7 +1681,7 @@ pub fn paginate_history(
     // Treat the cursor as a seq value: include entries with seq > cursor.
     // `None` and `Some(0)` both start from the beginning because seq
     // counters start at 1.
-    let after_seq: u64 = cursor.map(|v| v as u64).unwrap_or(0);
+    let after_seq = cursor.unwrap_or(0);
 
     let mut count: u32 = 0;
     for entry in history.iter() {
