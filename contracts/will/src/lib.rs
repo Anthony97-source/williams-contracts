@@ -1029,6 +1029,13 @@ impl WillContract {
         let (primary_token, _) = tokens.get_unchecked(0);
         let primary_amount = primary_token_balance(&balances, &primary_token);
 
+        // `is_native` is a legacy/reserved compatibility field, not a
+        // transfer-mode switch: every creation path stores `false` and no
+        // production branch reads it to pick a transfer primitive. Native XLM
+        // is locked and paid out through its SEP-41 asset contract address
+        // via `token::Client`, exactly like any other token (see
+        // `Will::is_native` in `types.rs`). The field is kept, and always
+        // written as `false`, so the persisted layout stays wire-compatible.
         let will = Will {
             id: will_id,
             owner: owner.clone(),

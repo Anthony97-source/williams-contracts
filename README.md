@@ -513,23 +513,41 @@ This repo participates in the **Stellar Wave Program** on [Drips](https://drips.
 
 ## Handsoff notes
 
+> [!NOTE]
+> This section preserves the original handoff notes **as history**. Each entry
+> keeps its original text and carries a *verified disposition* describing what
+> the source at `3210249c79d425b56842a555e77edbf86cdd638f` actually does today.
+> Historical notes are not live findings. A disposition of "superseded" or
+> "historical" means the claim no longer describes the code; it does **not**
+> mean every authorization path has been audited. Genuinely unresolved items
+> are listed separately under [Open findings](#open-findings) below.
+
+### Historical notes and dispositions
+
 <!-- handsoff-issue-436 -->
-- #436: Will owner validation is weak: no check that the caller is the will owner before allowing cancellations or updates, relying instead on SDK-side logic
+- **#436 (historical):** "Will owner validation is weak: no check that the caller is the will owner before allowing cancellations or updates, relying instead on SDK-side logic"
+  - **Disposition: superseded.** Owner validation is enforced on-chain, not by the SDK. `cancel_will` (`contracts/will/src/lib.rs`) calls `owner.require_auth()` and then `load_owned`, which verifies the persisted owner against the supplied address and fails with `WillError::NotOwner` (code `2`) on mismatch. The same `require_auth` + `load_owned` pattern guards the other owner-only entry points (`check_in`, `emergency_checkin`, `update_beneficiaries`, `top_up`, `close_will`, etc.).
+  - **Caveat:** this disposition records the owner-auth path only. It is not a claim that all authorization paths (guardians, delegates, keepers, beneficiaries) have been audited — see [#47](https://github.com/willi-d7/williams-contracts/issues/47) for the broader authorization-coverage request.
 
 <!-- handsoff-issue-438 -->
-- #438: allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde
+- **#438 (historical):** "allocate_funds returns a Map of beneficiary to share, but the Map insertion order is arbitrary, so distribute must not depend on processing beneficiaries in a specific orde"
+  - **Disposition: historical — symbol removed.** No `allocate_funds` symbol exists in the current source. `distribute` builds an ordered **vector transfer plan** (a `Vec` of per-token, per-recipient transfers) rather than a `Map`, so the arbitrary-insertion-order concern does not apply to the current implementation. The deterministic ordering and rounding rules are documented under [Release safety](#release-safety).
 
 <!-- handsoff-issue-115 -->
-- #115: Storage Tombstone Fragmentation Post-Archival Consumes Ledger Rent
+- **#115 (historical):** "Storage Tombstone Fragmentation Post-Archival Consumes Ledger Rent"
+  - **Disposition: retained as audit evidence.** No verified fix is recorded here; treat as an open concern unless closed in the issue tracker.
 
 <!-- handsoff-issue-116 -->
-- #116: Excessive Memory Clone Operations in merge_beneficiaries and merge_guardians
+- **#116 (historical):** "Excessive Memory Clone Operations in merge_beneficiaries and merge_guardians"
+  - **Disposition: retained as audit evidence.** No verified fix is recorded here; treat as an open concern unless closed in the issue tracker.
 
 <!-- handsoff-issue-65 -->
-- #65: Fixed-Amount Beneficiaries Cannot Receive Secondary Tokens Deposited in Multi-Token Wills
+- **#65 (historical):** "Fixed-Amount Beneficiaries Cannot Receive Secondary Tokens Deposited in Multi-Token Wills"
+  - **Disposition: retained as audit evidence.** No verified fix is recorded here; treat as an open concern unless closed in the issue tracker.
 
 <!-- handsoff-issue-67 -->
-- #67: update_guardians_weighted Permits Assigning Zero Weight to Guardians
+- **#67 (historical):** "update_guardians_weighted Permits Assigning Zero Weight to Guardians"
+  - **Disposition: superseded in part.** `update_guardians_weighted` now normalises a weight of `0` to `1` (see `MAX_GUARDIAN_WEIGHT` in [Contract Constants](#contract-constants)), so a zero-weight guardian is no longer possible.
 
 <!-- handsoff-issue-68 -->
 - #68: Guardian Consent Status Survives Unchecked Across Guardian Weight Updates
