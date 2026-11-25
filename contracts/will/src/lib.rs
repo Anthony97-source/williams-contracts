@@ -12,8 +12,6 @@ compile_error!("The `fuzzing` feature must not be enabled for wasm builds.");
 // inherits that arg count on a synthetic item the attribute doesn't reach
 // when placed on the source function or the impl block, so it's set crate-wide.
 #![allow(clippy::too_many_arguments)]
-#![allow(deprecated)]
-#![allow(clippy::needless_borrows_for_generic_args)]
 
 //! Williams — a trustless on-chain inheritance and dead man's switch protocol
 //! for Stellar Soroban.
@@ -51,6 +49,8 @@ compile_error!("The `fuzzing` feature must not be enabled for wasm builds.");
 
 mod batch_check_in_limit;
 mod errors;
+// Preserve the legacy topic and payload encoding used by existing indexers.
+#[allow(deprecated)]
 mod events;
 mod guardian_vote_freshness;
 mod migration;
@@ -783,12 +783,9 @@ impl WillContract {
     ///
     /// # Panics
     /// - [`WillError::ZeroAmount`] if any token amount is not positive.
-    /// - [`WillError::TooManyBeneficiaries`] if the beneficiary/guardian/token lists are
-    ///   empty or exceed their respective caps (at most [`MAX_BENEFICIARIES`] = 10
-    ///   beneficiaries).
-    /// - [`WillError::InvalidPercentages`] if beneficiary basis points do not sum to 10,000.
-    /// - [`WillError::TooManyBeneficiaries`] if the beneficiary or guardian
-    ///   lists are empty or exceed their respective caps.
+    /// - [`WillError::TooManyBeneficiaries`] if the beneficiary list is empty or
+    ///   exceeds [`MAX_BENEFICIARIES`].
+    /// - [`WillError::TooManyGuardians`] if the guardian list exceeds [`MAX_GUARDIANS`].
     /// - [`WillError::InvalidTokenCount`] if the token list is empty or
     ///   exceeds `MAX_TOKENS`.
     /// - [`WillError::InvalidPercentages`] if the `Allocation::Percentage`
@@ -2663,7 +2660,7 @@ impl WillContract {
     /// # Panics
     /// - [`WillError::NotOwner`] if `owner` does not own `will_id`.
     /// - [`WillError::WillNotActive`] if the will is not `Active`.
-    /// - [`WillError::TooManyBeneficiaries`] if more than `MAX_GUARDIANS`
+    /// - [`WillError::TooManyGuardians`] if more than `MAX_GUARDIANS`
     ///   guardians are supplied.
     /// - [`WillError::InvalidGuardianThreshold`] if the new guardian list is
     ///   non-empty and the will's current `guardian_threshold` exceeds the new
@@ -4515,9 +4512,10 @@ impl WillContract {
     /// A `Vec<u64>` of newly allocated will ids, one per spec.
     ///
     /// # Panics
-    /// - [`WillError::TooManyBeneficiaries`] if the batch is empty or exceeds
-    ///   [`BATCH_MAX`], or if any individual spec violates the
-    ///   beneficiary/guardian caps.
+    /// - [`WillError::InvalidCreationBatchSize`] if the batch is empty or exceeds
+    ///   [`BATCH_MAX`].
+    /// - [`WillError::TooManyBeneficiaries`] or [`WillError::TooManyGuardians`]
+    ///   if an individual spec violates the corresponding list bounds.
     /// - [`WillError::InvalidTokenCount`] if any individual spec's token list
     ///   is empty or exceeds `MAX_TOKENS`.
     /// - [`WillError::InvalidToken`] if any token address in any spec fails
@@ -4540,7 +4538,7 @@ impl WillContract {
         owner.require_auth();
 
         if will_specs.is_empty() || will_specs.len() > BATCH_MAX {
-            panic_with_error!(&env, WillError::TooManyBeneficiaries);
+            panic_with_error!(&env, WillError::InvalidCreationBatchSize);
         }
 
         let mut ids = Vec::new(&env);
@@ -6615,7 +6613,7 @@ fn primary_token_balance(balances: &Map<Address, i128>, primary_token: &Address)
 /// owner is incapacitated or known to be dead.
 fn assert_valid_guardians(env: &Env, owner: &Address, guardians: &Vec<Address>) {
     if guardians.len() > MAX_GUARDIANS {
-        panic_with_error!(env, WillError::TooManyBeneficiaries);
+        panic_with_error!(env, WillError::TooManyGuardians);
     }
     for i in 0..guardians.len() {
         let guardian = guardians.get_unchecked(i);
