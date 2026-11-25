@@ -356,8 +356,14 @@ pub enum WillError {
     /// will entry that `reveal_and_claim` uses to verify the commitment,
     /// permanently trapping those reserved funds in the contract (#1).
     UnclaimedHashedBeneficiary = 58,
-    /// The guardian list exceeds the contract's maximum of three entries.
-    TooManyGuardians = 59,
-    /// The creation batch is empty or contains more than ten will specs.
-    InvalidCreationBatchSize = 60,
+    /// `retry_owner_refund` was called for a `(will_id, token)` pair with no
+    /// recorded deferred owner refund — either the token was never deferred
+    /// (it transferred successfully during cancellation), it was already
+    /// recovered, or the will is not in a cancelled/refunded state (#213).
+    ///
+    /// Owner refunds now use the same deferred-delivery model as beneficiary
+    /// payouts: a token that refuses transfer during `cancel_will`,
+    /// `refund_unconfirmed_will` or `guardian_cancel_pending_will` is recorded
+    /// as a recoverable liability instead of rolling back the whole refund.
+    NoDeferredOwnerRefund = 59,
 }
